@@ -1476,16 +1476,41 @@ function buscarDetalhe(tipo, chave, limite) {
 
 function lerResposta(r) {
   return r.json().then(function (corpo) {
-    if (!r.ok) throw new Error((corpo && corpo.mensagem) || ("HTTP " + r.status));
+    if (!r.ok) {
+      /* A mensagem amigável sozinha não resolve nada para quem vai consertar:
+         o motivo real (senha errada, pooler dormindo, variável faltando) vem
+         em `detalhe` e tem que chegar na tela junto. */
+      var erro = new Error((corpo && corpo.mensagem) || ("HTTP " + r.status));
+      erro.detalhe = corpo && corpo.detalhe;
+      erro.http = r.status;
+      throw erro;
+    }
     return corpo;
-  }, function () { throw new Error("A resposta do servidor não veio em JSON (HTTP " + r.status + ")."); });
+  }, function () {
+    var erro = new Error("A resposta do servidor não veio em JSON (HTTP " + r.status + ").");
+    erro.http = r.status;
+    if (r.status === 504) {
+      erro.detalhe = "A função da Vercel estourou 60 segundos. Costuma ser o primeiro acesso " +
+                     "depois de um tempo parado, com o banco e o pooler acordando juntos. " +
+                     "Tente de novo — a segunda chamada costuma responder na hora.";
+    }
+    throw erro;
+  });
 }
 
 function carregar(forcar) {
   if (carregandoPeriodo) return;
   carregandoPeriodo = true;
   trabalhando(true);
+  /* O primeiro acesso depois de um tempo parado acorda a função e o pooler
+     juntos e pode levar dezenas de segundos. Melhor dizer isso do que deixar
+     a tela parada dando a impressão de travamento. */
+  var demorou = setTimeout(function () {
+    var t = document.getElementById("carregandoTexto");
+    if (t) t.textContent = "Primeiro acesso depois de um tempo parado — o banco está acordando. Isso leva alguns segundos.";
+  }, 7000);
   buscarDados(forcar).then(function (dados) {
+    clearTimeout(demorou);
     D = dados;
     MOTIVO_MAPA = {};
     (D.motivos || []).forEach(function (m) { MOTIVO_MAPA[m[0]] = [m[1], m[2]]; });
@@ -1499,6 +1524,7 @@ function carregar(forcar) {
     if (c) c.remove();
     desenhar();
   }).catch(function (e) {
+    clearTimeout(demorou);
     carregandoPeriodo = false;
     trabalhando(false);
     falhar(e);
@@ -1514,8 +1540,9 @@ function falhar(e) {
   box.appendChild(document.createTextNode(
     "O painel lê o DATA WAREHOUSE pela função /api/dados. Se isto acabou de ser publicado, " +
     "confira as variáveis de ambiente do projeto na Vercel."));
-  var code = el("code", null, e && e.message ? e.message : String(e));
-  box.appendChild(code);
+  box.appendChild(el("code", null, (e && e.message ? e.message : String(e)) +
+                                   (e && e.http ? "  ·  HTTP " + e.http : "")));
+  if (e && e.detalhe) box.appendChild(el("code", null, e.detalhe));
   caixa.appendChild(box);
   var btn = el("button", null, "Tentar de novo");
   btn.addEventListener("click", function () { location.reload(); });

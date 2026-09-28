@@ -65,17 +65,34 @@ function obterPool() {
     pool = new Pool(configuracao());
     /* Se a conexão ociosa cair sozinha (o pooler reciclou, a rede oscilou),
        descarta o Pool: a próxima chamada cria um do zero. */
+    const meu = pool;
     pool.on("error", (e) => {
       console.error("Conexão Postgres ociosa caiu:", e && e.message);
-      pool = null;
+      if (pool === meu) pool = null;   // nunca zerar o pool de outra chamada
     });
   }
   return pool;
 }
 
 function erroDeConexao(e) {
-  return /timeout|ECONNRESET|ECONNREFUSED|terminated|ETIMEDOUT|EAUTHQUERY/i
+  return /timeout|ECONNRESET|ECONNREFUSED|terminated|ETIMEDOUT|EAUTHQUERY|after calling end/i
     .test(String((e && e.message) || ""));
+}
+
+/**
+ * Descarta um pool que deu erro.
+ *
+ * O cuidado aqui não é firula: a versão anterior fazia `if (pool) await
+ * pool.end()` dentro do catch, ou seja, encerrava o que estivesse na variável
+ * NAQUELE momento — que podia já ser um pool novo, criado por outra chamada
+ * em paralelo. O resultado era a chamada vizinha morrer com "Cannot use a pool
+ * after calling end on the pool", que foi exatamente o erro do primeiro acesso
+ * em produção. Agora só se descarta o pool que a própria chamada usou, a troca
+ * da referência acontece ANTES do end(), e não se espera o encerramento.
+ */
+function descartar(usado) {
+  if (pool === usado) pool = null;
+  if (usado) Promise.resolve(usado.end()).catch(() => { /* já estava morto */ });
 }
 
 /**
@@ -87,13 +104,13 @@ function erroDeConexao(e) {
 async function consultar(sql, valores, tentativas = 3) {
   let ultimoErro;
   for (let i = 0; i < tentativas; i++) {
+    const meuPool = obterPool();
     try {
-      return await obterPool().query(sql, valores);
+      return await meuPool.query(sql, valores);
     } catch (e) {
       ultimoErro = e;
       if (!erroDeConexao(e)) throw e;
-      try { if (pool) await pool.end(); } catch (_) { /* já estava morto */ }
-      pool = null;
+      descartar(meuPool);
       if (i < tentativas - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
     }
   }

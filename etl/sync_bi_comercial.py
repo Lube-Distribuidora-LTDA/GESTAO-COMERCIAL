@@ -93,6 +93,28 @@ def _atualizar_views(conn_pg) -> None:
             log.warning("  nao consegui atualizar a view %s: %s", view, exc)
 
 
+def _aquecer_painel(conn_pg) -> None:
+    """Chama a funcao do painel uma vez, so para deixar o banco quente.
+
+    Motivo: a fato_margem_item tem 594 MB. Quando ninguem consulta ha um tempo,
+    a primeira leitura vem do disco e passou de 60 segundos em producao — o
+    limite da funcao da Vercel — dando timeout para quem abriu o painel
+    primeiro. Rodando isto ao fim de cada carga (8x ao dia), as paginas ficam no
+    cache do Postgres e a primeira pessoa do dia nao paga essa conta.
+
+    Se falhar, nao e problema: o painel continua funcionando, so mais lento."""
+    relogio = bi.cronometro()
+    try:
+        with conn_pg.cursor() as cur:
+            cur.execute("SELECT length(comercial.painel_dados()::text)")
+            tamanho = cur.fetchone()[0]
+        conn_pg.commit()
+        log.info("  painel aquecido em %.1fs (resposta de %s KB)", relogio(), round(tamanho / 1024))
+    except Exception as exc:  # noqa: BLE001
+        conn_pg.rollback()
+        log.warning("  nao consegui aquecer o painel: %s", exc)
+
+
 def main() -> int:
     args = _argumentos()
     if args.listar:
@@ -148,6 +170,7 @@ def main() -> int:
                 log.info("=" * 70)
                 log.info("Atualizando os agregados do painel...")
                 _atualizar_views(conn_pg)
+                _aquecer_painel(conn_pg)
 
             _resumo(resultados)
 
