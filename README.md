@@ -227,6 +227,20 @@ cada janela toca o banco.
 
 ### Configuração na Vercel
 
+**Root Directory: `web`** — em *Settings › General*. É a primeira coisa a fazer, antes
+de qualquer deploy. Sem isso a Vercel faz o build na raiz do repositório, encontra os
+scripts do `etl/`, conclui que o projeto é Python e o build morre com:
+
+```
+Error: No python entrypoint found. Set "tool.vercel.entrypoint" in pyproject.toml
+or define an entrypoint in one of: app.py, index.py, server.py, main.py, ...
+```
+
+Com o Root Directory em `web`, o `index.html` vira o site, `api/dados.js` e
+`api/detalhe.js` viram funções (é por estarem em `api/` **relativo à raiz do projeto**
+que são reconhecidas), e o `vercel.json` daqui é o que vale. Framework Preset: **Other**
+— não há build.
+
 Em **Settings › Environment Variables**, para Production, Preview e Development:
 
 | Variável | Valor |
