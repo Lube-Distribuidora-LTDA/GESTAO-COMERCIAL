@@ -47,15 +47,25 @@ Atualizadas pelo ETL logo depois da carga (`sync_bi_comercial.py`, lista
 `VIEWS_DO_PAINEL`):
 
 ```
+comercial.mv_margem_dia          margem por dia, filial e RCA — é dela que o painel lê
 comercial.mv_margem_mes          venda, CMV, margem e contagens por mês e filial
 comercial.mv_comissao_rca_mes    a cadeia inteira da comissão por RCA e mês
 comercial.mv_comissao_mes        o mesmo, somado por mês (soma das comissões dos RCAs)
 comercial.mv_devolucao_rca_mes   devolvido e devolvido-do-vendedor por RCA e mês
 ```
 
-Por que elas existem: a série histórica da margem precisa varrer 3,3 milhões de
-linhas. Lendo da view, o painel responde em milissegundos; o período escolhido na
-tela continua vindo da tabela crua, que tem índice por data.
+Por que elas existem: a `fato_margem_item` tem 3,3 milhões de linhas e 594 MB.
+Na primeira versão o painel lia dela três vezes por acesso (resumo do período,
+ranking por RCA e lista dos piores). Com o cache do Postgres quente isso
+respondia em 2,4 s; **com ele frio passou de 60 s** — o limite da função da
+Vercel — e ainda deixou o pooler do projeto sem fôlego.
+
+Hoje só a **lista dos piores itens** toca a tabela grande, e mesmo assim pelo
+índice `ix_margem_piores`, que já carrega o filtro `codoper='S' AND venda > 0`:
+a varredura acontece no índice e o heap é lido apenas nas 1.200 linhas que
+aparecem na tela. Resumo e ranking saem da `mv_margem_dia`, que tem grão de
+**dia** justamente para responder qualquer intervalo de datas (mês fechado não
+responderia "01 a 17 de setembro").
 
 `mv_comissao_mes` merece uma nota: a comissão do mês ali é a **soma das comissões
 dos RCAs**, não a faixa aplicada sobre a margem da empresa inteira. É essa

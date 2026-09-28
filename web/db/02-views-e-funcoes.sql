@@ -146,6 +146,9 @@ CREATE UNIQUE INDEX ix_mv_devolucao_rca_mes ON comercial.mv_devolucao_rca_mes (m
 -- ---------------------------------------------------------------------------
 -- Os fatos vão em vetor de vetores (e não em objeto por linha) porque a
 -- resposta fica ~3x menor — é o mesmo formato do painel de Compras.
+-- ATENÇÃO: esta versão de painel_dados foi SUBSTITUÍDA por
+-- 04-painel-dados-v2.sql, que lê a margem do agregado `mv_margem_dia` em vez de
+-- varrer a fato_margem_item a cada acesso. Ela fica aqui como histórico.
 CREATE OR REPLACE FUNCTION comercial.painel_dados(p_de date DEFAULT NULL, p_ate date DEFAULT NULL)
 RETURNS json
 LANGUAGE plpgsql
