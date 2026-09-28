@@ -1,0 +1,12 @@
+{
+  "name": "painel-comercial",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel web do BI Comercial da Lube Distribuidora — lê o DATA WAREHOUSE no Supabase.",
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

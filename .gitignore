@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# NUNCA versionar credenciais
+# ---------------------------------------------------------------------------
+ENV
+.env
+.env.*
+env
+!ENV.example
+
+# Chaves e certificados soltos
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---------------------------------------------------------------------------
+# Saidas do ETL (contem dados da operacao e podem ser grandes)
+# ---------------------------------------------------------------------------
+*.log
+diagnostico_bi_comercial.txt
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------
+# Web / Vercel
+# ---------------------------------------------------------------------------
+node_modules/
+.next/
+out/
+dist/
+.vercel
+.env.local
+.env.development.local
+.env.production.local
+
+# ---------------------------------------------------------------------------
+# Sistema operacional / editores
+# ---------------------------------------------------------------------------
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
