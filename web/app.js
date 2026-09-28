@@ -2,11 +2,21 @@
  * Central Comercial — painel do BI COMERCIAL da Lube Distribuidora
  *
  * Todo o conteúdo vem de /api/dados (que chama comercial.painel_dados no
- * Supabase) e, para as listas grandes, de /api/detalhe. Aqui não há regra de
- * negócio inventada: a régua da comissão chega no payload, vinda da tabela
- * comercial.dim_faixa_comissao.
+ * Supabase) e, para as listas grandes, de /api/detalhe. Nenhuma regra de
+ * negócio é inventada aqui: a régua da comissão chega no payload, vinda da
+ * tabela comercial.dim_faixa_comissao.
  *
- * Quatro páginas: Comissão, Margem por item, Pedidos em aberto e Devoluções.
+ * Sobre os gráficos, por que são assim:
+ *   · nunca dois eixos no mesmo desenho — quando há duas medidas de escalas
+ *     diferentes (dinheiro e percentual), viram dois desenhos empilhados,
+ *     compartilhando o mesmo eixo de tempo;
+ *   · cor de dado ≠ cor de estado: as quatro cores de série foram validadas
+ *     contra este fundo (faixa de luminosidade, croma, daltonismo, contraste);
+ *     verde/âmbar/vermelho ficam reservados para "bom / atenção / alerta";
+ *   · texto nunca veste a cor da série: quem carrega identidade é a marca
+ *     colorida ao lado;
+ *   · todo gráfico tem rótulo de dado onde ele cabe — e some quando não cabe,
+ *     em vez de virar sopa de dígitos sobrepostos.
  * ========================================================================== */
 (function () {
 "use strict";
@@ -14,22 +24,24 @@
 /* ---------------------------------------------------------------------------
  * Estado
  * ------------------------------------------------------------------------ */
-var D = null;                       // payload do /api/dados
+var D = null;
 var carregandoPeriodo = false;
+var ULTIMOS = {};              /* último valor de cada número, para animar a troca */
 
 var E = {
   pagina: "comissao",
-  de: null, ate: null,              // período (strings AAAA-MM-DD)
-  filiais: null,                    // Set; null = todas
-  supervisor: "",                   // "" = todos
+  de: null, ate: null,
+  filiais: null,
+  supervisor: "",
   busca: "",
-  grao: "rca",                      // "rca" | "rca_filial"
-  limiteMargem: 5,                  // % usado nas páginas de margem
+  grao: "rca",
+  colunas: "essencial",        /* "essencial" | "completo" */
+  limiteMargem: 5,
   limitePedido: 20,
-  posicoes: null,                   // Set; null = todas
+  posicoes: null,
   soMotivoRca: false,
   motivo: "",
-  ordem: {}, pag: {}
+  ordem: {}, pag: {}, porPagina: {}
 };
 
 var PAGINAS = [
@@ -52,7 +64,6 @@ function fNum(v, d) { return v == null ? "—" : Number(v).toLocaleString("pt-BR
 function fR$(v) { return n(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function fR$0(v) { return n(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }); }
 function fPct(v, casas) { return v == null ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas == null ? 2 : casas, maximumFractionDigits: casas == null ? 2 : casas }) + "%"; }
-/* R$ 1,25 mi / R$ 14,4 mil — cabe dentro de barra e de cartão */
 function fCurto(v) {
   var a = Math.abs(n(v));
   if (a >= 1e9) return "R$ " + fNum(v / 1e9, 2) + " bi";
@@ -98,6 +109,25 @@ function svgEl(tag, attrs) {
 function limpar(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
 var semMovimento = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/* Sobe o número de onde ele estava até onde chegou. Sem valor anterior, sobe
+   de zero — é o que dá a sensação de o painel contar o dinheiro na sua frente. */
+function animarNumero(alvo, chave, valor, formatar) {
+  var anterior = ULTIMOS[chave];
+  ULTIMOS[chave] = valor;
+  if (semMovimento || valor == null || isNaN(valor)) { alvo.textContent = formatar(valor); return; }
+  var de = (anterior == null || isNaN(anterior)) ? 0 : anterior;
+  if (de === valor) { alvo.textContent = formatar(valor); return; }
+  var t0 = null, dur = 900;
+  function passo(agora) {
+    if (t0 == null) t0 = agora;
+    var p = Math.min(1, (agora - t0) / dur);
+    var suave = 1 - Math.pow(1 - p, 4);
+    alvo.textContent = formatar(de + (valor - de) * suave);
+    if (p < 1) requestAnimationFrame(passo);
+  }
+  requestAnimationFrame(passo);
+}
+
 /* ---------------------------------------------------------------------------
  * Nomes
  * ------------------------------------------------------------------------ */
@@ -112,11 +142,8 @@ function supervisorDoRca(cod) {
 function nomeSupervisor(cod) { return D.supervisores[cod] || D.supervisores[String(cod)] || "—"; }
 function nomeCliente(cod) { return D.clientes[cod] || D.clientes[String(cod)] || ("Cliente " + cod); }
 function nomeProduto(cod) { return D.produtos[cod] || D.produtos[String(cod)] || ("Produto " + cod); }
-function motivoDe(cod) {
-  var m = MOTIVO_MAPA[cod];
-  return m ? m[0] : "—";
-}
 var MOTIVO_MAPA = {};
+function motivoDe(cod) { var m = MOTIVO_MAPA[cod]; return m ? m[0] : "—"; }
 
 /* ---------------------------------------------------------------------------
  * A régua da comissão — vem do banco, não está escrita aqui
@@ -124,7 +151,7 @@ var MOTIVO_MAPA = {};
 function percComissao(margemPerc) {
   var p = (margemPerc == null || isNaN(margemPerc)) ? -999999 : margemPerc;
   for (var i = 0; i < D.faixas.length; i++) {
-    var f = D.faixas[i];                       // [perc_min, perc_max, perc_comissao]
+    var f = D.faixas[i];
     if (p >= n(f[0]) && (f[1] == null || p < n(f[1]))) return n(f[2]) / 100;
   }
   return 0;
@@ -133,11 +160,11 @@ function percComissao(margemPerc) {
 /* Soma os componentes e aplica a faixa UMA vez, no grão pedido.
  * É esta função, e só ela, que decide quanto um RCA recebe. */
 function calcular(c) {
-  var totalLiquido = c.venda - c.devSt;             // [44] base do pagamento
-  var totalLiquidoSst = c.venda - c.devSst;         // [Medida 6] denominador do %
-  var cmvLiquido = c.cmvVenda - c.cmvDev + c.descfin + c.cmvBonif - c.st;   // [45]
-  var massa = totalLiquidoSst - cmvLiquido;                                  // [46]
-  var perc = totalLiquidoSst ? (massa / totalLiquidoSst) * 100 : null;       // [47]
+  var totalLiquido = c.venda - c.devSt;
+  var totalLiquidoSst = c.venda - c.devSst;
+  var cmvLiquido = c.cmvVenda - c.cmvDev + c.descfin + c.cmvBonif - c.st;
+  var massa = totalLiquidoSst - cmvLiquido;
+  var perc = totalLiquidoSst ? (massa / totalLiquidoSst) * 100 : null;
   var faixa = percComissao(perc);
   return {
     venda: c.venda, devSt: c.devSt, st: c.st, cmvVenda: c.cmvVenda, cmvDev: c.cmvDev,
@@ -161,7 +188,7 @@ function somar(acc, linha) {
 }
 
 /* ---------------------------------------------------------------------------
- * Filtros aplicados às linhas de comissão
+ * Filtros
  * ------------------------------------------------------------------------ */
 function filiaisDisponiveis() {
   var s = {};
@@ -179,23 +206,49 @@ function passaFiltroRca(codusur, codfilial) {
 }
 
 /* ---------------------------------------------------------------------------
- * Componentes visuais
+ * Componentes
  * ------------------------------------------------------------------------ */
-function blocoKpis(defs) {
-  var g = el("div", "kpis");
+
+/* O número que a página lidera, com o contexto ao lado. */
+function heroi(cfg) {
+  var g = el("div", "heroi sobe");
+  var card = el("div", "heroi-card");
+  card.appendChild(el("div", "rot", cfg.rotulo));
+  var v = el("div", "valor");
+  card.appendChild(v);
+  animarNumero(v, "heroi_" + E.pagina, cfg.valor, cfg.formatar || fCurto);
+  if (cfg.sub) {
+    var s = el("div", "sub");
+    s.innerHTML = cfg.sub;
+    card.appendChild(s);
+  }
+  g.appendChild(card);
+  var lado = el("div", "heroi-lado");
+  blocoKpis(cfg.kpis, lado);
+  g.appendChild(lado);
+  return g;
+}
+
+function blocoKpis(defs, destino) {
+  var g = destino || el("div", "kpis");
   defs.forEach(function (d, i) {
-    var k = el("div", "kpi rise " + (d.tom || ""));
-    k.style.animationDelay = Math.min(i * 40, 300) + "ms";
+    var k = el("div", "kpi sobe " + (d.tom || ""));
+    k.style.animationDelay = Math.min(i * 45, 320) + "ms";
     if (d.grande) k.classList.add("grande");
     var lbl = el("div", "lbl");
     lbl.appendChild(document.createTextNode(d.rotulo));
     if (d.ajuda) {
-      var a = el("span", "ajuda", "i"); a.tabIndex = 0;
+      var a = el("span", "ajuda", "?"); a.tabIndex = 0;
       a.appendChild(el("span", "tip", d.ajuda));
       lbl.appendChild(a);
     }
     k.appendChild(lbl);
-    var v = el("div", "val", d.valor);
+    var v = el("div", "val");
+    if (d.numero != null && d.formatar) {
+      animarNumero(v, E.pagina + "_" + d.rotulo, d.numero, d.formatar);
+    } else {
+      v.textContent = d.valor;
+    }
     if (d.titulo) v.title = d.titulo;
     k.appendChild(v);
     if (d.sub) k.appendChild(el("div", "sub", d.sub));
@@ -205,7 +258,7 @@ function blocoKpis(defs) {
 }
 
 function painel(titulo, sub, acoes) {
-  var p = el("section", "painel rise");
+  var p = el("section", "painel sobe");
   var cab = el("div", "painel-head");
   var esq = el("div");
   esq.appendChild(el("h2", null, titulo));
@@ -216,13 +269,12 @@ function painel(titulo, sub, acoes) {
   var corpo = el("div", "painel-corpo");
   p.appendChild(corpo);
   p.corpo = corpo;
-  p.cabecalho = cab;
   return p;
 }
 
 function nota(texto, tom) {
   var d = el("div", "nota " + (tom || ""));
-  d.appendChild(el("span", "ic", tom === "alerta" ? "!" : tom === "aviso" ? "!" : "i"));
+  d.appendChild(el("span", "ic", tom === "grave" || tom === "atencao" ? "!" : "i"));
   var p = el("div");
   p.innerHTML = texto;
   d.appendChild(p);
@@ -231,7 +283,7 @@ function nota(texto, tom) {
 
 function chips(rotulo, opcoes, atual, aoEscolher, tom) {
   var g = el("div", "fgrupo");
-  g.appendChild(el("span", "frot", rotulo));
+  if (rotulo) g.appendChild(el("span", "frot", rotulo));
   opcoes.forEach(function (o) {
     var b = el("button", "chip" + (String(o.valor) === String(atual) ? " on " + (tom || "") : ""), o.rotulo);
     b.type = "button";
@@ -281,8 +333,6 @@ function seletorSupervisor() {
   var g = el("div", "fgrupo");
   g.appendChild(el("span", "frot", "Supervisor"));
   var s = el("select");
-  s.className = "";
-  s.style.cssText = "background:var(--surface-2);border:1px solid var(--line-1);color:var(--txt-1);border-radius:10px;padding:7px 10px;font-size:12.5px;font-weight:700;cursor:pointer;";
   var op = el("option", null, "Todos"); op.value = ""; s.appendChild(op);
   Object.keys(D.supervisores)
     .map(function (k) { return { cod: k, nome: D.supervisores[k] }; })
@@ -297,19 +347,24 @@ function seletorSupervisor() {
   return g;
 }
 
-/* ---------- gráfico de colunas com rótulo de dados ---------- */
+/* ---------------------------------------------------------------------------
+ * Gráficos
+ * ------------------------------------------------------------------------ */
+
+/* Colunas de UMA medida. Duas medidas de escalas diferentes nunca dividem o
+   mesmo desenho: viram dois desenhos empilhados (ver serieTempo). */
 function colunas(caixa, dados, opts) {
   opts = opts || {};
   limpar(caixa);
   if (!dados.length) { caixa.appendChild(el("div", "vazio", "Sem dados no período.")); return; }
-  var larguraCol = opts.larguraCol || 46;
-  var L = Math.max(620, dados.length * larguraCol + 110);
-  var A = opts.altura || 250;
-  var mostrarRotulos = dados.length <= 26 && opts.rotulos !== false;
-  var mE = 68, mD = opts.linha ? 58 : 16, mT = mostrarRotulos ? 34 : 16, mB = 34;
+  var larguraCol = opts.larguraCol || 48;
+  var L = Math.max(640, dados.length * larguraCol + 110);
+  var A = opts.altura || 230;
+  var mE = 66, mD = 18, mT = 30, mB = 30;
   var pw = L - mE - mD, ph = A - mT - mB;
   var svg = svgEl("svg", { viewBox: "0 0 " + L + " " + A, width: L, height: A, role: "img",
                            "aria-label": opts.aria || "Gráfico de colunas" });
+  var serie = opts.serie || "viz-1";
 
   var maxV = Math.max.apply(null, dados.map(function (d) { return Math.abs(n(d.valor)); })) || 1;
   var passos = 4;
@@ -319,144 +374,222 @@ function colunas(caixa, dados, opts) {
 
   for (var i = 0; i <= passos; i++) {
     var y = mT + ph - (i * passo / topo) * ph;
-    svg.appendChild(svgEl("line", { x1: mE, y1: y, x2: mE + pw, y2: y, stroke: "var(--grid)", "stroke-width": 1 }));
-    var t = svgEl("text", { x: mE - 9, y: y + 4, "text-anchor": "end", "font-size": 10, "font-weight": 700,
+    svg.appendChild(svgEl("line", { x1: mE, y1: y, x2: mE + pw, y2: y,
+      stroke: i === 0 ? "var(--line-1)" : "var(--grade)", "stroke-width": 1 }));
+    var t = svgEl("text", { x: mE - 10, y: y + 4, "text-anchor": "end", "font-size": 10, "font-weight": 700,
                             fill: "var(--txt-3)", "font-family": "JetBrains Mono, monospace" });
     t.textContent = opts.eixoFmt ? opts.eixoFmt(i * passo) : fCurtoSemMoeda(i * passo);
     svg.appendChild(t);
   }
 
-  var bw = Math.min(30, (pw / dados.length) * 0.58);
+  /* marca fina: no máximo 24px, canto de cima arredondado e base reta */
+  var bw = Math.min(24, (pw / dados.length) * 0.56);
+  var mostrarRotulos = dados.length <= 26 && opts.rotulos !== false;
   var crescer = [], rotulos = [];
   dados.forEach(function (d, i) {
     var cx = mE + (i + 0.5) * (pw / dados.length);
-    var h = Math.max(1, (Math.abs(n(d.valor)) / topo) * ph);
+    var h = Math.max(2, (Math.abs(n(d.valor)) / topo) * ph);
     var y = mT + ph - h;
+    var g = svgEl("g", { class: "col" });
     var barra = svgEl("rect", { class: "barra", x: cx - bw / 2, y: semMovimento ? y : mT + ph,
-                                width: bw, height: semMovimento ? h : 0, rx: 5,
-                                fill: "var(--" + (d.cor || opts.cor || "brand-blue-lt") + ")" });
+                                width: bw, height: semMovimento ? h : 0, rx: 4,
+                                fill: "var(--" + serie + ")" });
+    g.appendChild(barra);
+    /* o rx arredonda os quatro cantos; este retângulo devolve a base reta,
+       porque a coluna nasce da linha de base e não flutua */
+    var base = svgEl("rect", { x: cx - bw / 2, y: mT + ph - Math.min(h, 5), width: bw,
+                               height: Math.min(h, 5), fill: "var(--" + serie + ")" });
+    g.appendChild(base);
     var tit = svgEl("title", {});
     tit.textContent = d.rotulo + ": " + (opts.valorTooltip ? opts.valorTooltip(d.valor) : fR$(d.valor));
-    barra.appendChild(tit);
-    svg.appendChild(barra);
+    g.appendChild(tit);
+    /* área de clique maior que a marca, para o toque e o mouse pegarem fácil */
+    g.appendChild(svgEl("rect", { x: cx - (pw / dados.length) / 2, y: mT, width: pw / dados.length,
+                                  height: ph, fill: "transparent" }));
+    svg.appendChild(g);
     if (!semMovimento) crescer.push([barra, y, h]);
 
-    /* rótulo de dados em cima da coluna — não quero passar o mouse para saber
-       quanto é. Se não couber (coluna estreita demais), fica só o tooltip. */
     if (mostrarRotulos && Math.abs(n(d.valor)) > 0) {
-      var r = svgEl("text", { x: cx, y: y - 9, "text-anchor": "middle", "font-size": 10.5,
-                              "font-weight": 800, fill: "var(--txt-1)", "font-family": "JetBrains Mono, monospace" });
-      r.textContent = opts.valorFmt ? opts.valorFmt(d.valor) : fCurtoSemMoeda(d.valor);
-      r.style.opacity = semMovimento ? 1 : 0;
-      r.style.transition = "opacity .35s ease";
-      svg.appendChild(r);
-      if (!semMovimento) rotulos.push(r);
+      var texto = opts.valorFmt ? opts.valorFmt(d.valor) : fCurtoSemMoeda(d.valor);
+      /* rótulo só entra se couber na fatia — senão o valor fica no tooltip */
+      if (texto.length * 6.1 <= (pw / dados.length) + 8) {
+        var r = svgEl("text", { x: cx, y: y - 9, "text-anchor": "middle", "font-size": 10.5,
+                                "font-weight": 800, fill: "var(--txt-1)",
+                                "font-family": "JetBrains Mono, monospace" });
+        r.textContent = texto;
+        r.style.opacity = semMovimento ? 1 : 0;
+        r.style.transition = "opacity .4s ease";
+        svg.appendChild(r);
+        if (!semMovimento) rotulos.push(r);
+      }
     }
-    var lb = svgEl("text", { x: cx, y: A - 12, "text-anchor": "middle", "font-size": 10,
+    var lb = svgEl("text", { x: cx, y: A - 10, "text-anchor": "middle", "font-size": 10,
                              "font-weight": 600, fill: "var(--txt-3)" });
     lb.textContent = d.rotulo;
     svg.appendChild(lb);
   });
 
-  if (opts.linha) {
-    var vals = opts.linha.filter(function (v) { return v != null; });
-    var maxL = Math.max.apply(null, vals) || 1, minL = Math.min.apply(null, vals);
-    var faixa = (maxL - minL) || 1;
-    var pts = [];
-    opts.linha.forEach(function (v, i) {
-      if (v == null) return;
-      var cx = mE + (i + 0.5) * (pw / dados.length);
-      var y = mT + ph - ((v - minL) / faixa) * ph * 0.72 - ph * 0.14;
-      pts.push([cx, y, v]);
-    });
-    if (pts.length) {
-      svg.appendChild(svgEl("polyline", {
-        points: pts.map(function (p) { return p[0] + "," + p[1]; }).join(" "),
-        fill: "none", stroke: "var(--" + (opts.linhaCor || "amber") + ")", "stroke-width": 2.4,
-        "stroke-linejoin": "round", "stroke-linecap": "round"
-      }));
-      pts.forEach(function (p, i) {
-        svg.appendChild(svgEl("circle", { cx: p[0], cy: p[1], r: 3.4,
-          fill: "var(--" + (opts.linhaCor || "amber") + ")", stroke: "var(--navy-900)", "stroke-width": 1.6 }));
-        if (mostrarRotulos) {
-          var t = svgEl("text", { x: p[0], y: p[1] - 9, "text-anchor": "middle", "font-size": 9.5,
-            "font-weight": 800, fill: "var(--" + (opts.linhaCor || "amber") + ")",
-            "font-family": "JetBrains Mono, monospace" });
-          t.textContent = opts.linhaFmt ? opts.linhaFmt(p[2]) : fPct(p[2], 1);
-          svg.appendChild(t);
-        }
-      });
-    }
-  }
-
   caixa.appendChild(svg);
   if (crescer.length) {
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
-        crescer.forEach(function (c) { c[0].setAttribute("y", c[1]); c[0].setAttribute("height", c[2]); });
+        crescer.forEach(function (c, i) {
+          c[0].style.transitionDelay = Math.min(i * 22, 400) + "ms";
+          c[0].setAttribute("y", c[1]); c[0].setAttribute("height", c[2]);
+        });
       });
     });
-    setTimeout(function () { rotulos.forEach(function (t) { t.style.opacity = 1; }); }, 520);
+    setTimeout(function () { rotulos.forEach(function (t) { t.style.opacity = 1; }); }, 620);
   }
 }
 
-/* ---------- rosca ---------- */
-function rosca(caixa, partes, leitura) {
+/* Linha de apoio: a segunda medida, no seu próprio desenho, com o mesmo eixo
+   de tempo do de cima. É assim que duas escalas convivem sem inventar
+   correlação com dois eixos no mesmo gráfico. */
+function linha(caixa, dados, opts) {
+  opts = opts || {};
   limpar(caixa);
-  var total = partes.reduce(function (s, p) { return s + n(p.valor); }, 0) || 1;
-  var env = el("div", "donut");
-  var box = el("div", "donut-svg");
-  var svg = svgEl("svg", { viewBox: "0 0 158 158" });
-  svg.style.cssText = "width:100%;height:100%;transform:rotate(-90deg);";
-  var r = 62, circ = 2 * Math.PI * r, offset = 0, segs = [];
-  svg.appendChild(svgEl("circle", { cx: 79, cy: 79, r: r, fill: "none", stroke: "var(--surface-3)", "stroke-width": 19 }));
-  partes.forEach(function (p) {
-    var len = circ * (n(p.valor) / total);
-    var seg = svgEl("circle", { cx: 79, cy: 79, r: r, fill: "none", stroke: "var(--" + p.cor + ")",
-                                "stroke-width": 19, "stroke-linecap": "butt",
-                                "stroke-dashoffset": -offset });
-    var alvo = Math.max(len - 1.5, 0) + " " + (circ - len + 1.5);
-    seg.setAttribute("stroke-dasharray", semMovimento ? alvo : "0 " + circ);
-    seg.style.transition = "stroke-dasharray .9s var(--ease)";
-    var t = svgEl("title", {}); t.textContent = p.rotulo + ": " + fR$(p.valor);
-    seg.appendChild(t);
-    svg.appendChild(seg);
-    if (!semMovimento) segs.push([seg, alvo]);
-    offset += len;
-  });
-  box.appendChild(svg);
-  var centro = el("div", "donut-centro");
-  var pctEl = el("span", "p", fPct(n(partes[0].valor) / total * 100, 1));
-  pctEl.style.color = "var(--" + partes[0].cor + ")";
-  centro.appendChild(pctEl);
-  centro.appendChild(el("span", "r", partes[0].rotulo));
-  box.appendChild(centro);
-  env.appendChild(box);
+  var validos = dados.filter(function (d) { return d.valor != null; });
+  if (!validos.length) { caixa.appendChild(el("div", "vazio", "Sem dados no período.")); return; }
+  var larguraCol = opts.larguraCol || 48;
+  var L = Math.max(640, dados.length * larguraCol + 110);
+  var A = opts.altura || 112;
+  var mE = 66, mD = 18, mT = 20, mB = 18;
+  var pw = L - mE - mD, ph = A - mT - mB;
+  var svg = svgEl("svg", { viewBox: "0 0 " + L + " " + A, width: L, height: A, role: "img",
+                           "aria-label": opts.aria || "Série de apoio" });
+  var serie = opts.serie || "viz-4";
 
-  var leg = el("div", "donut-leg");
-  partes.forEach(function (p) {
-    var l = el("div", "l");
-    var sw = el("span", "sw"); sw.style.background = "var(--" + p.cor + ")";
-    l.appendChild(sw);
-    l.appendChild(el("span", "lb", p.rotulo));
-    l.appendChild(el("span", "vl", fCurto(p.valor) + " · " + fPct(n(p.valor) / total * 100, 1)));
-    leg.appendChild(l);
+  var vals = validos.map(function (d) { return n(d.valor); });
+  var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+  var folga = (max - min) * 0.25 || Math.abs(max) * 0.12 || 1;
+  var topo = max + folga, base = min - folga;
+  var faixa = (topo - base) || 1;
+  function py(v) { return mT + ph - ((v - base) / faixa) * ph; }
+
+  [topo, base].forEach(function (v) {
+    var y = py(v);
+    svg.appendChild(svgEl("line", { x1: mE, y1: y, x2: mE + pw, y2: y, stroke: "var(--grade)", "stroke-width": 1 }));
+    var t = svgEl("text", { x: mE - 10, y: y + 4, "text-anchor": "end", "font-size": 9.5, "font-weight": 700,
+                            fill: "var(--txt-3)", "font-family": "JetBrains Mono, monospace" });
+    t.textContent = opts.eixoFmt ? opts.eixoFmt(v) : fPct(v, 1);
+    svg.appendChild(t);
   });
-  if (leitura) {
-    var p = el("p", null, leitura);
-    p.style.cssText = "margin:4px 0 0;font-size:12px;color:var(--txt-3);line-height:1.55;font-weight:500;";
-    leg.appendChild(p);
+  if (opts.referencia != null && opts.referencia > base && opts.referencia < topo) {
+    var yr = py(opts.referencia);
+    svg.appendChild(svgEl("line", { x1: mE, y1: yr, x2: mE + pw, y2: yr,
+      stroke: "var(--atencao)", "stroke-width": 1, opacity: .55 }));
+    var tr = svgEl("text", { x: mE + pw, y: yr - 5, "text-anchor": "end", "font-size": 9.5, "font-weight": 800,
+                             fill: "var(--atencao)", "font-family": "JetBrains Mono, monospace" });
+    tr.textContent = opts.referenciaRotulo || "";
+    svg.appendChild(tr);
   }
-  env.appendChild(leg);
-  caixa.appendChild(env);
-  if (segs.length) {
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () { segs.forEach(function (s) { s[0].setAttribute("stroke-dasharray", s[1]); }); });
+
+  var pts = [];
+  dados.forEach(function (d, i) {
+    if (d.valor == null) return;
+    pts.push([mE + (i + 0.5) * (pw / dados.length), py(n(d.valor)), n(d.valor), d.rotulo]);
+  });
+
+  /* área: a mesma cor a 10% — um véu, nunca um bloco saturado */
+  var area = "M" + pts[0][0] + "," + (mT + ph) + " " +
+             pts.map(function (p) { return "L" + p[0] + "," + p[1]; }).join(" ") +
+             " L" + pts[pts.length - 1][0] + "," + (mT + ph) + " Z";
+  svg.appendChild(svgEl("path", { d: area, fill: "var(--" + serie + ")", opacity: .10 }));
+  svg.appendChild(svgEl("polyline", {
+    points: pts.map(function (p) { return p[0] + "," + p[1]; }).join(" "),
+    fill: "none", stroke: "var(--" + serie + ")", "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round"
+  }));
+
+  pts.forEach(function (p, i) {
+    var ultimo = i === pts.length - 1;
+    var pto = svgEl("circle", { cx: p[0], cy: p[1], r: ultimo ? 5 : 3.2,
+      fill: "var(--" + serie + ")", stroke: "var(--surface-1)", "stroke-width": 2 });
+    var tit = svgEl("title", {});
+    tit.textContent = p[3] + ": " + (opts.valorFmt ? opts.valorFmt(p[2]) : fPct(p[2], 2));
+    pto.appendChild(tit);
+    svg.appendChild(pto);
+  });
+
+  /* rótulo direto só nos pontos que contam: o último e os dois extremos */
+  var iMax = 0, iMin = 0;
+  pts.forEach(function (p, i) { if (p[2] > pts[iMax][2]) iMax = i; if (p[2] < pts[iMin][2]) iMin = i; });
+  [pts.length - 1, iMax, iMin].filter(function (v, i, a) { return a.indexOf(v) === i; }).forEach(function (i) {
+    var p = pts[i];
+    var t = svgEl("text", { x: Math.min(Math.max(p[0], mE + 16), mE + pw - 16), y: p[1] - 10,
+      "text-anchor": "middle", "font-size": 10, "font-weight": 800, fill: "var(--txt-1)",
+      "font-family": "JetBrains Mono, monospace" });
+    t.textContent = opts.valorFmt ? opts.valorFmt(p[2]) : fPct(p[2], 1);
+    svg.appendChild(t);
+  });
+
+  caixa.appendChild(svg);
+}
+
+/* Duas medidas, dois desenhos, um eixo de tempo só. */
+function serieTempo(destino, dados, opts) {
+  destino.appendChild(el("div", "gtitulo", opts.tituloBarra));
+  var cima = el("div", "gbox");
+  destino.appendChild(cima);
+  colunas(cima, dados.map(function (d) { return { rotulo: d.rotulo, valor: d.barra }; }), {
+    serie: opts.serieBarra, altura: opts.altura || 230,
+    valorFmt: opts.barraFmt, valorTooltip: opts.barraTooltip,
+    eixoFmt: opts.barraEixo, aria: opts.tituloBarra
+  });
+  if (opts.tituloLinha) {
+    destino.appendChild(el("div", "gtitulo", opts.tituloLinha));
+    var baixo = el("div", "gbox");
+    destino.appendChild(baixo);
+    linha(baixo, dados.map(function (d) { return { rotulo: d.rotulo, valor: d.linha }; }), {
+      serie: opts.serieLinha, valorFmt: opts.linhaFmt, eixoFmt: opts.linhaFmt,
+      referencia: opts.referencia, referenciaRotulo: opts.referenciaRotulo, aria: opts.tituloLinha
     });
   }
 }
 
-/* ---------- ranking horizontal ---------- */
+/* Parte-do-todo com duas categorias: uma barra, não uma rosca de 2 fatias. */
+function barraProporcao(caixa, partes, leitura) {
+  limpar(caixa);
+  var total = partes.reduce(function (s, p) { return s + n(p.valor); }, 0) || 1;
+  var barra = el("div", "prop");
+  var alvos = [];
+  partes.forEach(function (p) {
+    var i = el("i");
+    var pct = n(p.valor) / total * 100;
+    i.style.background = "var(--" + p.cor + ")";
+    i.style.width = semMovimento ? pct + "%" : "0%";
+    var texto = fPct(pct, 1);
+    /* só rotula dentro quando cabe; senão o valor vive na legenda abaixo */
+    if (pct > 12) i.appendChild(el("span", "rot", texto));
+    i.title = p.rotulo + ": " + fR$(p.valor) + " (" + texto + ")";
+    barra.appendChild(i);
+    if (!semMovimento) alvos.push([i, pct + "%"]);
+  });
+  caixa.appendChild(barra);
+
+  var leg = el("div", "glegenda");
+  partes.forEach(function (p) {
+    var s = el("span");
+    var sw = el("i"); sw.style.background = "var(--" + p.cor + ")";
+    s.appendChild(sw);
+    s.appendChild(document.createTextNode(p.rotulo + " · " + fCurto(p.valor)));
+    leg.appendChild(s);
+  });
+  caixa.appendChild(leg);
+  if (leitura) {
+    var p = el("p", null, leitura);
+    p.style.cssText = "margin:10px 0 0;font-size:12px;color:var(--txt-3);line-height:1.55;font-weight:500;";
+    caixa.appendChild(p);
+  }
+  if (alvos.length) {
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { alvos.forEach(function (a) { a[0].style.width = a[1]; }); });
+    });
+  }
+}
+
+/* Ranking: uma série, uma cor. A posição vira número, não cor. */
 function ranking(caixa, itens, opts) {
   opts = opts || {};
   limpar(caixa);
@@ -464,36 +597,44 @@ function ranking(caixa, itens, opts) {
   var lista = el("div", "rank");
   var max = itens.reduce(function (m, i) { return Math.max(m, Math.abs(n(i.valor))); }, 0) || 1;
   var barras = [];
-  itens.forEach(function (i) {
+  itens.forEach(function (i, idx) {
     var l = el("div", "rank-l");
+    l.appendChild(el("div", "rank-pos", String(idx + 1)));
     l.appendChild(el("div", "rank-nome", i.nome));
     var trilho = el("div", "rank-trilho");
     var b = el("div", "rank-barra");
     var alvo = Math.max(1.5, Math.abs(n(i.valor)) / max * 100) + "%";
     b.style.width = semMovimento ? alvo : "0%";
-    b.style.background = "var(--" + (i.cor || opts.cor || "brand-blue-lt") + ")";
+    b.style.background = "var(--" + (opts.serie || "viz-1") + ")";
     trilho.appendChild(b);
     l.appendChild(trilho);
     l.appendChild(el("div", "rank-val", i.rotulo));
     l.title = i.nome + ": " + i.rotulo;
     lista.appendChild(l);
-    if (!semMovimento) barras.push([b, alvo]);
+    if (!semMovimento) barras.push([b, alvo, idx]);
   });
   caixa.appendChild(lista);
   if (barras.length) {
     requestAnimationFrame(function () {
-      requestAnimationFrame(function () { barras.forEach(function (b) { b[0].style.width = b[1]; }); });
+      requestAnimationFrame(function () {
+        barras.forEach(function (b) {
+          b[0].style.transitionDelay = Math.min(b[2] * 40, 500) + "ms";
+          b[0].style.width = b[1];
+        });
+      });
     });
   }
 }
 
-/* ---------- tabela com ordenação, paginação e exportação ---------- */
+/* ---------------------------------------------------------------------------
+ * Tabela — ordenação, colunas fixas, paginação, totais em destaque e CSV
+ * ------------------------------------------------------------------------ */
 function tabela(cfg) {
   var chave = cfg.id;
   var ordem = E.ordem[chave] || { campo: cfg.ordemInicial, dir: cfg.dirInicial == null ? -1 : cfg.dirInicial };
   E.ordem[chave] = ordem;
   var pagina = E.pag[chave] || 1;
-  var porPagina = cfg.porPagina || 60;
+  var porPagina = E.porPagina[chave] || cfg.porPagina || 50;
 
   var linhas = cfg.linhas.slice();
   if (ordem.campo != null) {
@@ -507,20 +648,38 @@ function tabela(cfg) {
     });
   }
   var totalLinhas = linhas.length;
-  var totalPaginas = Math.max(1, Math.ceil(totalLinhas / porPagina));
+  var tudo = porPagina >= 99999;
+  var totalPaginas = tudo ? 1 : Math.max(1, Math.ceil(totalLinhas / porPagina));
   if (pagina > totalPaginas) { pagina = totalPaginas; E.pag[chave] = pagina; }
-  var visiveis = linhas.slice((pagina - 1) * porPagina, pagina * porPagina);
+  var visiveis = tudo ? linhas : linhas.slice((pagina - 1) * porPagina, pagina * porPagina);
 
   var env = el("div");
+
+  /* faixa de totais: o resumo do que está filtrado, antes da tabela e em
+     tamanho grande — é o número que a reunião olha */
+  if (cfg.totais) {
+    var faixa = el("div", "totais");
+    cfg.totais(linhas).forEach(function (t) {
+      var c = el("div", "t" + (t.destaque ? " destaque" : ""));
+      c.appendChild(el("div", "k", t.rotulo));
+      var v = el("div", "v");
+      if (t.numero != null && t.formatar) animarNumero(v, chave + "_tot_" + t.rotulo, t.numero, t.formatar);
+      else v.textContent = t.valor;
+      c.appendChild(v);
+      if (t.sub) c.appendChild(el("div", "d", t.sub));
+      faixa.appendChild(c);
+    });
+    env.appendChild(faixa);
+  }
+
   var rol = el("div", "tabela-rolagem");
   var t = el("table", "dados");
   var thead = el("thead");
   var tr = el("tr");
   cfg.colunas.forEach(function (c, i) {
-    var th = el("th", (c.num ? "n " : "") + (ordem.campo === i ? "ordenado" : ""));
+    var th = el("th", (c.num ? "n " : "") + (c.fixa ? "fixa" + c.fixa + " " : "") + (ordem.campo === i ? "ordenado" : ""));
     th.appendChild(document.createTextNode(c.titulo));
-    var seta = el("span", "seta", ordem.campo === i ? (ordem.dir === 1 ? "▲" : "▼") : "▾");
-    th.appendChild(seta);
+    th.appendChild(el("span", "seta", ordem.campo === i ? (ordem.dir === 1 ? "▲" : "▼") : "▾"));
     if (c.ajuda) th.title = c.ajuda;
     th.addEventListener("click", function () {
       if (ordem.campo === i) ordem.dir = -ordem.dir; else { ordem.campo = i; ordem.dir = c.num ? -1 : 1; }
@@ -533,47 +692,63 @@ function tabela(cfg) {
   t.appendChild(thead);
 
   var tb = el("tbody");
-  visiveis.forEach(function (linha) {
+  var maxMedida = cfg.medida ? visiveis.reduce(function (m, l) { return Math.max(m, Math.abs(n(cfg.medida(l)))); }, 0) : 0;
+  visiveis.forEach(function (linha, idx) {
     var tr = el("tr");
     if (cfg.aoClicar) {
       tr.className = "clicavel";
       tr.addEventListener("click", function () { cfg.aoClicar(linha); });
     }
     cfg.colunas.forEach(function (c, i) {
-      var td = el("td", (c.num ? "n " : "") + (c.fraco ? "fraco " : "") + (c.corta ? "corta" : ""));
-      var conteudo = c.celula(linha);
-      if (conteudo instanceof Node) td.appendChild(conteudo);
-      else if (c.destacar && E.busca) escreverComDestaque(td, conteudo, E.busca);
-      else td.textContent = conteudo == null ? "—" : conteudo;
+      var td = el("td", (c.num ? "n " : "") + (c.fraco ? "fraco " : "") + (c.corta ? "corta " : "") +
+                        (c.fixa ? "fixa" + c.fixa + " " : "") + (c.medida ? "medida" : ""));
+      /* na coluna da medida principal, uma barra clara atrás do número mostra
+         o tamanho relativo sem precisar de gráfico à parte */
+      if (c.medida && maxMedida) {
+        var fundo = el("span", "fundo");
+        fundo.style.width = Math.max(2, Math.abs(n(cfg.medida(linha))) / maxMedida * 100) + "%";
+        fundo.style.background = "var(--" + (cfg.medidaCor || "viz-2") + ")";
+        td.appendChild(fundo);
+      }
+      var conteudo = c.celula(linha, idx);
+      var caixa = c.medida ? el("span") : td;
+      if (conteudo instanceof Node) caixa.appendChild(conteudo);
+      else if (c.destacar && E.busca) escreverComDestaque(caixa, conteudo, E.busca);
+      else caixa.textContent = conteudo == null ? "—" : conteudo;
+      if (caixa !== td) td.appendChild(caixa);
       if (c.titulo2) td.title = c.titulo2(linha) || "";
       tr.appendChild(td);
     });
     tb.appendChild(tr);
   });
   t.appendChild(tb);
-
-  if (cfg.total && totalLinhas) {
-    var tf = el("tfoot");
-    var trT = el("tr", "total");
-    cfg.colunas.forEach(function (c, i) {
-      var td = el("td", c.num ? "n" : "");
-      td.textContent = cfg.total(linhas, i) || (i === 0 ? "Total" : "");
-      trT.appendChild(td);
-    });
-    tf.appendChild(trT);
-    t.appendChild(tf);
-  }
-
   rol.appendChild(t);
   if (!totalLinhas) limpar(rol).appendChild(el("div", "vazio", cfg.vazio || "Nada encontrado com estes filtros."));
   env.appendChild(rol);
 
   var pe = el("div", "tabela-pe");
-  pe.appendChild(el("div", "info",
-    totalLinhas ? ("Mostrando " + fInt(visiveis.length) + " de " + fInt(totalLinhas) + " linhas" +
-                   (cfg.aviso ? " · " + cfg.aviso : "")) : (cfg.aviso || "")));
-  var dir = el("div");
-  dir.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;";
+  var info = el("div", "info");
+  info.innerHTML = totalLinhas
+    ? ("Mostrando <b>" + fInt(visiveis.length) + "</b> de <b>" + fInt(totalLinhas) + "</b> linhas" +
+       (cfg.aviso ? " · " + cfg.aviso : ""))
+    : (cfg.aviso || "");
+  pe.appendChild(info);
+
+  var dir = el("div", "pe-dir");
+  if (totalLinhas > 25) {
+    var sel = el("select");
+    sel.style.cssText = "background:var(--surface-2);border:1px solid var(--line-2);color:var(--txt-1);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;";
+    [25, 50, 100, 99999].forEach(function (v) {
+      var o = el("option", null, v >= 99999 ? "Mostrar tudo" : v + " por página");
+      o.value = v;
+      if (v === porPagina) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () {
+      E.porPagina[chave] = +sel.value; E.pag[chave] = 1; desenhar(true);
+    });
+    dir.appendChild(sel);
+  }
   if (cfg.csv) {
     var bx = el("button", "btn-limpar", "Exportar CSV");
     bx.type = "button";
@@ -582,12 +757,19 @@ function tabela(cfg) {
   }
   if (totalPaginas > 1) {
     var pg = el("div", "paginas");
-    var ant = el("button", null, "‹ Anterior"); ant.type = "button"; ant.disabled = pagina <= 1;
-    ant.addEventListener("click", function () { E.pag[chave] = pagina - 1; desenhar(true); });
-    var pos = el("button", null, "Próxima ›"); pos.type = "button"; pos.disabled = pagina >= totalPaginas;
-    pos.addEventListener("click", function () { E.pag[chave] = pagina + 1; desenhar(true); });
-    var meio = el("button", null, pagina + " / " + totalPaginas); meio.disabled = true;
-    pg.appendChild(ant); pg.appendChild(meio); pg.appendChild(pos);
+    var botao = function (rotulo, alvo, desabilitado) {
+      var b = el("button", null, rotulo);
+      b.type = "button"; b.disabled = !!desabilitado;
+      b.addEventListener("click", function () { E.pag[chave] = alvo; desenhar(true); });
+      return b;
+    };
+    pg.appendChild(botao("«", 1, pagina <= 1));
+    pg.appendChild(botao("‹", pagina - 1, pagina <= 1));
+    var atual = el("button", "atual", pagina + " / " + totalPaginas);
+    atual.disabled = true;
+    pg.appendChild(atual);
+    pg.appendChild(botao("›", pagina + 1, pagina >= totalPaginas));
+    pg.appendChild(botao("»", totalPaginas, pagina >= totalPaginas));
     dir.appendChild(pg);
   }
   pe.appendChild(dir);
@@ -600,8 +782,7 @@ function escreverComDestaque(td, texto, termo) {
   var i = s.toLowerCase().indexOf(termo);
   if (i === -1) { td.textContent = s; return; }
   td.appendChild(document.createTextNode(s.slice(0, i)));
-  var m = el("mark", null, s.slice(i, i + termo.length));
-  td.appendChild(m);
+  td.appendChild(el("mark", null, s.slice(i, i + termo.length)));
   td.appendChild(document.createTextNode(s.slice(i + termo.length)));
 }
 
@@ -623,7 +804,7 @@ function exportarCsv(cfg, linhas) {
   out.push(cfg.colunas.map(function (c) { return c.titulo; }).join(sep));
   linhas.forEach(function (l) {
     out.push(cfg.colunas.map(function (c) {
-      var v = c.csv ? c.csv(l) : c.celula(l);
+      var v = c.csv ? c.csv(l) : c.celula(l, 0);
       if (v instanceof Node) v = v.textContent;
       return String(v == null ? "" : v).replace(/[\r\n;]/g, " ");
     }).join(sep));
@@ -636,7 +817,9 @@ function exportarCsv(cfg, linhas) {
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
 }
 
-/* ---------- modal ---------- */
+/* ---------------------------------------------------------------------------
+ * Modal
+ * ------------------------------------------------------------------------ */
 function abrirModal(eyebrow, titulo, meta, montar) {
   var raiz = document.getElementById("modal-raiz");
   limpar(raiz);
@@ -662,7 +845,6 @@ function abrirModal(eyebrow, titulo, meta, montar) {
   cab.appendChild(x);
   m.appendChild(cab);
   var corpo = el("div");
-  corpo.style.padding = "4px 0 0";
   m.appendChild(corpo);
   ov.appendChild(m);
   ov.addEventListener("click", function (e) { if (e.target === ov) fechar(); });
@@ -680,7 +862,6 @@ function abrirModal(eyebrow, titulo, meta, montar) {
 function paginaComissao(raiz) {
   var linhas = (D.comissao.rca || []).filter(function (l) { return passaFiltroRca(l[0], l[1]); });
 
-  /* agrega no grão escolhido */
   var mapa = new Map();
   linhas.forEach(function (l) {
     var k = E.grao === "rca" ? String(l[0]) : l[0] + "|" + l[1];
@@ -696,53 +877,54 @@ function paginaComissao(raiz) {
     return r;
   }).sort(function (a, b) { return b.comissao - a.comissao; });
 
-  /* três formas de somar a mesma comissão — é o ponto mais delicado do BI */
   var geral = componentesVazios();
   linhas.forEach(function (l) { somar(geral, l); });
   var empresa = calcular(geral);
   var somaGrao = itens.reduce(function (s, i) { return s + i.comissao; }, 0);
-  var porRcaFilial = (function () {
+
+  function somaNoGrao(chaveDe) {
     var m = new Map();
     linhas.forEach(function (l) {
-      var k = l[0] + "|" + l[1];
+      var k = chaveDe(l);
       if (!m.has(k)) m.set(k, componentesVazios());
       somar(m.get(k), l);
     });
     var t = 0;
     m.forEach(function (c) { t += calcular(c).comissao; });
     return t;
-  })();
-  var porRca = (function () {
-    var m = new Map();
-    linhas.forEach(function (l) {
-      var k = String(l[0]);
-      if (!m.has(k)) m.set(k, componentesVazios());
-      somar(m.get(k), l);
-    });
-    var t = 0;
-    m.forEach(function (c) { t += calcular(c).comissao; });
-    return t;
-  })();
+  }
+  var porRca = somaNoGrao(function (l) { return String(l[0]); });
+  var porRcaFilial = somaNoGrao(function (l) { return l[0] + "|" + l[1]; });
 
-  raiz.appendChild(blocoKpis([
-    { rotulo: "Total líquido", valor: fCurto(empresa.totalLiquido), titulo: fR$(empresa.totalLiquido),
-      tom: "money", grande: true, sub: "venda s/ ST − devolução c/ ST",
-      ajuda: "É a base sobre a qual a comissão é paga: [30] − [37] do Power BI." },
-    { rotulo: "Massa de margem", valor: fCurto(empresa.massa), titulo: fR$(empresa.massa),
-      tom: "info", grande: true, sub: "total líquido − CMV líquido" },
-    { rotulo: "% líquido da empresa", valor: fPct(empresa.perc, 2), tom: "roxo",
-      sub: "margem do conjunto filtrado",
-      ajuda: "É a margem do TOTAL. A faixa de cada RCA é calculada sobre a margem DELE, não sobre esta." },
-    { rotulo: "Comissão a pagar", valor: fCurto(somaGrao), titulo: fR$(somaGrao), tom: "ok", grande: true,
-      sub: "soma por " + (E.grao === "rca" ? "RCA" : "RCA × filial"),
-      ajuda: "Soma das comissões calculadas uma a uma. Não é a faixa da empresa aplicada ao total — ver o bloco de conferência abaixo." },
-    { rotulo: "RCAs com movimento", valor: fInt(itens.length), tom: "", sub: "no período e nos filtros" },
-    { rotulo: "ST no período", valor: fCurto(empresa.st), titulo: fR$(empresa.st), tom: "aviso", grande: true,
-      sub: "substituição tributária" }
-  ]));
+  var meses = D.comissao.mes || [];
+  var ultimo = meses.length ? meses[meses.length - 1] : null;
+  var penultimo = meses.length > 1 ? meses[meses.length - 2] : null;
+  var variacao = (ultimo && penultimo && n(penultimo[8]))
+    ? (n(ultimo[8]) - n(penultimo[8])) / n(penultimo[8]) * 100 : null;
 
-  /* filtros */
-  var f = el("div", "filtros rise");
+  raiz.appendChild(heroi({
+    rotulo: "Comissão a pagar no período",
+    valor: somaGrao,
+    formatar: fCurto,
+    sub: "Soma das comissões calculadas por <b>" + (E.grao === "rca" ? "RCA" : "RCA × filial") + "</b>, " +
+         "sobre <b>" + fCurto(empresa.totalLiquido) + "</b> de total líquido e " +
+         "<b>" + fPct(empresa.perc, 2) + "</b> de margem." +
+         (variacao != null ? " No último mês fechado a comissão variou <b>" + fPct(variacao, 1) + "</b> contra o mês anterior." : ""),
+    kpis: [
+      { rotulo: "Total líquido", numero: empresa.totalLiquido, formatar: fCurto, titulo: fR$(empresa.totalLiquido),
+        tom: "info", grande: true, sub: "venda sem ST menos devolução",
+        ajuda: "É a base sobre a qual a comissão é paga: venda sem ST menos a devolução do período." },
+      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fCurto, titulo: fR$(empresa.massa),
+        tom: "bom", grande: true, sub: "total líquido menos CMV líquido" },
+      { rotulo: "Margem líquida", numero: empresa.perc, formatar: function (v) { return fPct(v, 2); },
+        tom: "roxo", sub: "do conjunto filtrado",
+        ajuda: "A margem do total. Cada vendedor tem a margem dele, e é ela que define a faixa dele." },
+      { rotulo: "ST no período", numero: empresa.st, formatar: fCurto, titulo: fR$(empresa.st),
+        tom: "atencao", grande: true, sub: "substituição tributária em " + fInt(itens.length) + " vendedores" }
+    ]
+  }));
+
+  var f = el("div", "filtros sobe");
   var fil = filiaisDisponiveis();
   if (fil.length > 1) {
     f.appendChild(chipsMultiplos("Filial", fil.map(function (x) { return { valor: x, rotulo: "Filial " + x }; }),
@@ -751,22 +933,20 @@ function paginaComissao(raiz) {
   f.appendChild(chips("Grão da comissão", [
     { valor: "rca", rotulo: "Por RCA" },
     { valor: "rca_filial", rotulo: "Por RCA × filial" }
-  ], E.grao, function (v) { E.grao = v; desenhar(); }));
+  ], E.grao, function (v) { E.grao = v; desenhar(); }, "ouro"));
   f.appendChild(seletorSupervisor());
   f.appendChild(campoBusca("Buscar RCA por nome ou código…"));
   raiz.appendChild(f);
 
-  /* conferência: os três totais que o Power BI mostrava misturados */
-  var pc = painel("Conferência da comissão",
-    "O Power BI aplicava a faixa sobre o contexto do visual, então o rodapé da tela nunca era a soma das linhas. Aqui os três números aparecem juntos, e o que vale é o grão escolhido acima.");
+  var pc = painel("Como o total muda conforme o grão",
+    "A faixa de comissão é aplicada sobre a margem do conjunto — então somar por vendedor, por vendedor e filial, ou tudo de uma vez dá resultados diferentes. O painel paga o grão escolhido acima.");
   var conf = el("div", "confere");
   [
-    ["Faixa sobre a empresa", fR$(empresa.totalLiquido * empresa.faixa),
-     "Como o rodapé do Power BI calculava: uma faixa só (" + fPct(empresa.faixa * 100, 2) + ") sobre o total.", false],
-    ["Soma por RCA", fR$(porRca), "Uma faixa por vendedor, no mês inteiro.", E.grao === "rca"],
-    ["Soma por RCA × filial", fR$(porRcaFilial), "Como a tela principal do Power BI somava linha a linha.", E.grao === "rca_filial"],
-    ["Desconto financeiro", fR$(empresa.descfin),
-     "Contado uma vez por nota. Do jeito antigo seria " + fR$(empresa.descfinOrig) + ".", false]
+    ["Faixa única sobre o total", fR$(empresa.totalLiquido * empresa.faixa),
+     "Uma faixa só (" + fPct(empresa.faixa * 100, 2) + ") aplicada ao total do período.", false],
+    ["Soma por RCA", fR$(porRca), "Uma faixa por vendedor, no período inteiro.", E.grao === "rca"],
+    ["Soma por RCA × filial", fR$(porRcaFilial), "Uma faixa por vendedor em cada filial.", E.grao === "rca_filial"],
+    ["Desconto financeiro", fR$(empresa.descfin), "Contado uma vez por nota fiscal.", false]
   ].forEach(function (c) {
     var cel = el("div", "cel" + (c[3] ? " destaque" : ""));
     cel.appendChild(el("div", "k", c[0]));
@@ -778,110 +958,106 @@ function paginaComissao(raiz) {
   var difer = Math.abs(porRca - porRcaFilial);
   if (difer > 0.5) {
     var nt = nota("Separar por filial muda a comissão em <b>" + fR$(difer) + "</b> no período — " +
-      "é o mesmo vendedor caindo em faixas diferentes em cada filial. Qual dos dois vale é decisão do comercial; " +
-      "o painel paga o que estiver selecionado em <b>Grão da comissão</b>.", "aviso");
+      "é o mesmo vendedor caindo em faixas diferentes em cada filial.", "atencao");
     nt.style.marginTop = "14px";
     pc.corpo.appendChild(nt);
   }
   raiz.appendChild(pc);
 
-  /* tabela principal */
-  var colunas = [
-    { titulo: "Cód", num: false, celula: function (r) { return String(r.codusur); }, fraco: true },
-    { titulo: "RCA", celula: function (r) { return r.nome; }, destacar: true, corta: true },
+  var essencial = E.colunas === "essencial";
+  var cols = [
+    { titulo: "#", celula: function (r, i) {
+        var pg = E.pag["comissao"] || 1;
+        var pp = E.porPagina["comissao"] || 25;
+        var pos = (pp >= 99999 ? 0 : (pg - 1) * pp) + i + 1;
+        return el("span", "pos" + (pos <= 3 ? " top" : ""), String(pos));
+      }, fixa: 1, csv: function () { return ""; } },
+    { titulo: "RCA", celula: function (r) { return r.nome; }, destacar: true, corta: true, fixa: 2 },
     { titulo: "Supervisor", celula: function (r) { return r.supervisor; }, fraco: true, corta: true }
   ];
-  if (E.grao !== "rca") colunas.push({ titulo: "Filial", num: true, celula: function (r) { return r.codfilial; } });
-  colunas = colunas.concat([
+  if (E.grao !== "rca") cols.push({ titulo: "Filial", num: true, celula: function (r) { return r.codfilial; } });
+  cols.push(
     { titulo: "Total líquido", num: true, celula: function (r) { return fR$(r.totalLiquido); }, csv: function (r) { return fNum(r.totalLiquido); } },
-    { titulo: "Massa de margem", num: true, celula: function (r) { return fR$(r.massa); }, csv: function (r) { return fNum(r.massa); } },
-    { titulo: "% líquido", num: true, celula: function (r) { return fPct(r.perc, 2); }, csv: function (r) { return fNum(r.perc); } },
-    { titulo: "% comissão", num: true, celula: function (r) {
-        var s = el("span", "selo " + (r.faixa >= 0.03 ? "ok" : r.faixa <= 0.01 ? "alerta" : "aviso"), fPct(r.faixa * 100, 2));
-        return s;
+    { titulo: "Massa", num: true, celula: function (r) { return fR$(r.massa); }, csv: function (r) { return fNum(r.massa); } },
+    { titulo: "Margem", num: true, celula: function (r) { return fPct(r.perc, 2); }, csv: function (r) { return fNum(r.perc); } },
+    { titulo: "Faixa", num: true, celula: function (r) {
+        return el("span", "selo " + (r.faixa >= 0.03 ? "bom" : r.faixa <= 0.01 ? "grave" : "atencao"), fPct(r.faixa * 100, 2));
       }, csv: function (r) { return fNum(r.faixa * 100); } },
-    { titulo: "Comissão", num: true, celula: function (r) { return fR$(r.comissao); }, csv: function (r) { return fNum(r.comissao); } },
-    { titulo: "CMV venda", num: true, celula: function (r) { return fR$(r.cmvVenda); }, csv: function (r) { return fNum(r.cmvVenda); } },
-    { titulo: "CMV líquido", num: true, celula: function (r) { return fR$(r.cmvLiquido); }, csv: function (r) { return fNum(r.cmvLiquido); } },
-    { titulo: "ST", num: true, celula: function (r) { return fR$(r.st); }, csv: function (r) { return fNum(r.st); } },
-    { titulo: "Desc. fin.", num: true, celula: function (r) { return fR$(r.descfin); }, csv: function (r) { return fNum(r.descfin); } },
-    { titulo: "Notas", num: true, celula: function (r) { return fInt(r.notas); } },
-    { titulo: "Clientes", num: true, celula: function (r) { return fInt(r.clientes); } }
-  ]);
+    { titulo: "Comissão", num: true, medida: true, celula: function (r) { return fR$(r.comissao); }, csv: function (r) { return fNum(r.comissao); } }
+  );
+  if (!essencial) {
+    cols.push(
+      { titulo: "CMV venda", num: true, celula: function (r) { return fR$(r.cmvVenda); }, csv: function (r) { return fNum(r.cmvVenda); } },
+      { titulo: "CMV líquido", num: true, celula: function (r) { return fR$(r.cmvLiquido); }, csv: function (r) { return fNum(r.cmvLiquido); } },
+      { titulo: "ST", num: true, celula: function (r) { return fR$(r.st); }, csv: function (r) { return fNum(r.st); } },
+      { titulo: "Desc. fin.", num: true, celula: function (r) { return fR$(r.descfin); }, csv: function (r) { return fNum(r.descfin); } }
+    );
+  }
+  cols.push(
+    { titulo: "Notas", num: true, celula: function (r) { return fInt(r.notas); }, fraco: true },
+    { titulo: "Clientes", num: true, celula: function (r) { return fInt(r.clientes); }, fraco: true }
+  );
 
-  var pt = painel("Comissão por " + (E.grao === "rca" ? "RCA" : "RCA × filial"),
-    "Clique numa linha para ver as notas do vendedor no período.");
+  var campos = ["", "nome", "supervisor"];
+  if (E.grao !== "rca") campos.push("codfilial");
+  campos = campos.concat(["totalLiquido", "massa", "perc", "faixa", "comissao"]);
+  if (!essencial) campos = campos.concat(["cmvVenda", "cmvLiquido", "st", "descfin"]);
+  campos = campos.concat(["notas", "clientes"]);
+
+  var pt = painel("Comissão por " + (E.grao === "rca" ? "vendedor" : "vendedor e filial"),
+    "Clique numa linha para ver as notas do vendedor no período.",
+    chips(null, [{ valor: "essencial", rotulo: "Colunas essenciais" }, { valor: "completo", rotulo: "Todas as colunas" }],
+      E.colunas, function (v) { E.colunas = v; desenhar(true); }, "ouro"));
   pt.corpo.remove();
   pt.appendChild(tabela({
     id: "comissao",
     tituloCsv: "Comissão por " + (E.grao === "rca" ? "RCA" : "RCA e filial"),
-    colunas: colunas,
+    colunas: cols,
     linhas: itens,
-    ordemInicial: (E.grao === "rca" ? 3 : 4) + 4,   /* coluna Comissão */
-    valorOrdem: function (r, i) {
-      var mapaCampos = ["codusur", "nome", "supervisor"];
-      if (E.grao !== "rca") mapaCampos.push("codfilial");
-      mapaCampos = mapaCampos.concat(["totalLiquido", "massa", "perc", "faixa", "comissao",
-                                      "cmvVenda", "cmvLiquido", "st", "descfin", "notas", "clientes"]);
-      return r[mapaCampos[i]];
-    },
-    total: function (todas, i) {
+    medida: function (r) { return r.comissao; },
+    medidaCor: "viz-2",
+    ordemInicial: campos.indexOf("comissao"),
+    valorOrdem: function (r, i) { return campos[i] === "" ? null : r[campos[i]]; },
+    totais: function (todas) {
       var soma = function (campo) { return todas.reduce(function (s, r) { return s + n(r[campo]); }, 0); };
-      var base = E.grao === "rca" ? 3 : 4;
-      if (i === 0) return "Total (" + fInt(todas.length) + ")";
-      if (i === base) return fR$(soma("totalLiquido"));
-      if (i === base + 1) return fR$(soma("massa"));
-      if (i === base + 2) return fPct(soma("totalLiquidoSst") ? soma("massa") / soma("totalLiquidoSst") * 100 : null, 2);
-      if (i === base + 4) return fR$(soma("comissao"));
-      if (i === base + 5) return fR$(soma("cmvVenda"));
-      if (i === base + 6) return fR$(soma("cmvLiquido"));
-      if (i === base + 7) return fR$(soma("st"));
-      if (i === base + 8) return fR$(soma("descfin"));
-      if (i === base + 9) return fInt(soma("notas"));
-      return "";
+      var tl = soma("totalLiquido"), tlsst = soma("totalLiquidoSst"), massa = soma("massa"), com = soma("comissao");
+      return [
+        { rotulo: "Vendedores", numero: todas.length, formatar: fInt },
+        { rotulo: "Total líquido", numero: tl, formatar: fCurto, sub: fR$(tl) },
+        { rotulo: "Massa de margem", numero: massa, formatar: fCurto },
+        { rotulo: "Margem", numero: tlsst ? massa / tlsst * 100 : 0, formatar: function (v) { return fPct(v, 2); } },
+        { rotulo: "Comissão a pagar", numero: com, formatar: fCurto, destaque: true, sub: fR$(com) },
+        { rotulo: "Notas", numero: soma("notas"), formatar: fInt }
+      ];
     },
     aoClicar: function (r) { abrirNotasDoRca(r); },
     csv: true,
-    porPagina: 80
+    porPagina: 25
   }));
   raiz.appendChild(pt);
 
-  /* tendência mensal */
-  var meses = (D.comissao.mes || []);
   if (meses.length) {
-    var pm = painel("Comissão e margem mês a mês",
-      "Comissão é a soma do que cada RCA ganhou naquele mês — não depende de filtro de tela. A linha é a margem líquida do mês.");
-    var box = el("div", "gbox");
-    pm.corpo.appendChild(box);
-    colunas_mes(box, meses);
-    var leg = el("div", "glegenda");
-    leg.innerHTML = '<span><i style="background:var(--green)"></i>Comissão do mês</span>' +
-                    '<span><i class="linha" style="background:var(--amber)"></i>% líquido da empresa</span>';
-    pm.corpo.appendChild(leg);
+    var pm = painel("Comissão e margem, mês a mês",
+      "A comissão de cada mês é a soma do que os vendedores ganharam nele — não muda com o filtro de período.");
+    serieTempo(pm.corpo, meses.map(function (m) {
+      return { rotulo: rotuloMes(m[0]), barra: n(m[8]), linha: m[7] == null ? null : n(m[7]) };
+    }), {
+      tituloBarra: "Comissão paga (R$)", serieBarra: "viz-2",
+      barraFmt: fCurtoSemMoeda, barraTooltip: fR$,
+      tituloLinha: "Margem líquida da empresa (%)", serieLinha: "viz-4",
+      linhaFmt: function (v) { return fPct(v, 1); },
+      referencia: 20, referenciaRotulo: "20% — primeira faixa"
+    });
     raiz.appendChild(pm);
   }
 }
 
-function colunas_mes(box, meses) {
-  colunas(box, meses.map(function (m) {
-    return { rotulo: rotuloMes(m[0]), valor: n(m[8]), cor: "green" };
-  }), {
-    altura: 260,
-    linha: meses.map(function (m) { return m[7] == null ? null : n(m[7]); }),
-    linhaCor: "amber",
-    linhaFmt: function (v) { return fPct(v, 1); },
-    valorFmt: function (v) { return fCurtoSemMoeda(v); },
-    valorTooltip: function (v) { return fR$(v); },
-    aria: "Comissão paga por mês"
-  });
-}
-
-/* Notas de um RCA — vem do /api/detalhe, porque a base tem 200 mil linhas */
+/* Notas de um RCA — vêm do /api/detalhe, porque a base tem 200 mil linhas */
 function abrirNotasDoRca(r) {
-  var corpo = abrirModal("Comissão · detalhe por nota", r.nome, [
+  var corpo = abrirModal("Detalhe por nota fiscal", r.nome, [
     ["Período", fData(E.de) + " a " + fData(E.ate)],
     ["Total líquido", fR$(r.totalLiquido)],
-    ["% líquido", fPct(r.perc, 2)],
+    ["Margem", fPct(r.perc, 2)],
     ["Comissão", fR$(r.comissao)]
   ], function (corpo) {
     corpo.appendChild(el("div", "vazio", "Buscando as notas no banco…"));
@@ -901,41 +1077,49 @@ function abrirNotasDoRca(r) {
     }).filter(function (x) { return E.filiais == null || E.filiais.has(Number(x.codfilial)); });
 
     var somaNota = linhas.reduce(function (s, x) { return s + x.comissao; }, 0);
-    var aviso = nota("Aplicando a faixa <b>nota a nota</b>, a comissão daria <b>" + fR$(somaNota) +
-      "</b>. No grão do vendedor ela é <b>" + fR$(r.comissao) + "</b>. A diferença não é erro de conta: " +
-      "a faixa depende da margem do conjunto, e conjunto menor cai em faixa diferente. " +
-      "O que o painel paga é o valor no grão escolhido.", "aviso");
-    aviso.style.margin = "0 22px 14px";
+    var aviso = nota("Se a faixa fosse aplicada <b>nota a nota</b>, a comissão daria <b>" + fR$(somaNota) +
+      "</b>. No grão do vendedor ela é <b>" + fR$(r.comissao) + "</b> — a faixa depende da margem do " +
+      "conjunto, e conjunto menor cai em faixa diferente. O painel paga o valor do grão escolhido.", "atencao");
+    aviso.style.margin = "16px 22px 0";
     corpo.appendChild(aviso);
 
     corpo.appendChild(tabela({
       id: "comissao_nf_" + r.codusur,
       tituloCsv: "Comissão nota a nota — " + r.nome,
       colunas: [
-        { titulo: "Data", celula: function (x) { return fData(x.dtmov); } },
+        { titulo: "Data", celula: function (x) { return fData(x.dtmov); }, fixa: 1 },
         { titulo: "Nota", num: true, celula: function (x) { return x.numnota; } },
         { titulo: "Pedido", num: true, celula: function (x) { return x.numped; }, fraco: true },
         { titulo: "Filial", num: true, celula: function (x) { return x.codfilial; }, fraco: true },
-        { titulo: "Total líquido", num: true, celula: function (x) { return fR$(x.totalLiquido); } },
+        { titulo: "Total líquido", num: true, medida: true, celula: function (x) { return fR$(x.totalLiquido); } },
         { titulo: "Massa", num: true, celula: function (x) { return fR$(x.massa); } },
-        { titulo: "% líquido", num: true, celula: function (x) { return fPct(x.perc, 2); } },
-        { titulo: "% comissão", num: true, celula: function (x) { return fPct(x.faixa * 100, 2); } },
+        { titulo: "Margem", num: true, celula: function (x) { return fPct(x.perc, 2); } },
+        { titulo: "Faixa", num: true, celula: function (x) { return fPct(x.faixa * 100, 2); } },
         { titulo: "Comissão", num: true, celula: function (x) { return fR$(x.comissao); } },
-        { titulo: "CMV líquido", num: true, celula: function (x) { return fR$(x.cmvLiquido); } },
-        { titulo: "ST", num: true, celula: function (x) { return fR$(x.st); } }
+        { titulo: "CMV líquido", num: true, celula: function (x) { return fR$(x.cmvLiquido); }, fraco: true },
+        { titulo: "ST", num: true, celula: function (x) { return fR$(x.st); }, fraco: true }
       ],
       linhas: linhas,
+      medida: function (x) { return x.totalLiquido; }, medidaCor: "viz-1",
       ordemInicial: 0, dirInicial: 1,
       valorOrdem: function (x, i) {
         return [x.dtmov, x.numnota, x.numped, x.codfilial, x.totalLiquido, x.massa, x.perc,
                 x.faixa, x.comissao, x.cmvLiquido, x.st][i];
       },
-      csv: true,
-      porPagina: 50,
+      totais: function (todas) {
+        var soma = function (c) { return todas.reduce(function (s, x) { return s + n(x[c]); }, 0); };
+        return [
+          { rotulo: "Notas", numero: todas.length, formatar: fInt },
+          { rotulo: "Total líquido", numero: soma("totalLiquido"), formatar: fCurto },
+          { rotulo: "Massa de margem", numero: soma("massa"), formatar: fCurto },
+          { rotulo: "Comissão nota a nota", numero: soma("comissao"), formatar: fCurto, destaque: true }
+        ];
+      },
+      csv: true, porPagina: 25,
       vazio: "Nenhuma nota deste RCA no período."
     }));
   }).catch(function (e) {
-    limpar(corpo).appendChild(nota("Não consegui buscar as notas: " + e.message, "alerta"));
+    limpar(corpo).appendChild(nota("Não consegui buscar as notas: " + e.message, "grave"));
   });
 }
 
@@ -945,34 +1129,35 @@ function abrirNotasDoRca(r) {
 function paginaMargem(raiz) {
   var r = D.margem.resumo || {};
   var limite = E.limiteMargem;
-  var chaveAbaixo = "abaixo_" + limite;
-  var abaixo = r[chaveAbaixo];
+  var abaixo = r["abaixo_" + limite];
   var margemMedia = n(r.venda) ? n(r.margem_valor) / n(r.venda) * 100 : null;
 
-  raiz.appendChild(blocoKpis([
-    { rotulo: "Venda no período", valor: fCurto(r.venda), titulo: fR$(r.venda), tom: "money", grande: true,
-      sub: fInt(r.itens) + " itens faturados" },
-    { rotulo: "Margem em reais", valor: fCurto(r.margem_valor), titulo: fR$(r.margem_valor), tom: "ok", grande: true,
-      sub: "venda − CMV, item a item" },
-    { rotulo: "Margem média", valor: fPct(margemMedia, 2), tom: "info", sub: "no conjunto do período" },
-    { rotulo: "Itens abaixo de " + limite + "%", valor: fInt(abaixo), tom: "alerta",
-      sub: r.itens ? fPct(n(abaixo) / n(r.itens) * 100, 1) + " dos itens" : "—" },
-    { rotulo: "Itens com margem negativa", valor: fInt(r.negativa), tom: "alerta",
-      sub: "venderam abaixo do custo" }
-  ]));
+  raiz.appendChild(heroi({
+    rotulo: "Margem gerada no período",
+    valor: n(r.margem_valor),
+    formatar: fCurto,
+    sub: "Sobre <b>" + fCurto(r.venda) + "</b> vendidos em <b>" + fInt(r.itens) + "</b> itens faturados, " +
+         "uma margem média de <b>" + fPct(margemMedia, 2) + "</b>. " +
+         "<b>" + fInt(abaixo) + "</b> itens saíram abaixo de " + limite + "%.",
+    kpis: [
+      { rotulo: "Venda no período", numero: n(r.venda), formatar: fCurto, titulo: fR$(r.venda), tom: "info", grande: true,
+        sub: fInt(r.itens) + " itens faturados" },
+      { rotulo: "Margem média", numero: margemMedia, formatar: function (v) { return fPct(v, 2); }, tom: "bom",
+        sub: "no conjunto do período" },
+      { rotulo: "Abaixo de " + limite + "%", numero: n(abaixo), formatar: fInt, tom: "atencao",
+        sub: r.itens ? fPct(n(abaixo) / n(r.itens) * 100, 1) + " dos itens" : "—" },
+      { rotulo: "Margem negativa", numero: n(r.negativa), formatar: fInt, tom: "grave",
+        sub: "venderam abaixo do custo" }
+    ]
+  }));
 
-  var f = el("div", "filtros rise");
+  var f = el("div", "filtros sobe");
   f.appendChild(chips("Limite de margem", [5, 8, 10, 15, 20].map(function (x) {
     return { valor: x, rotulo: x + "%" };
-  }), limite, function (v) { E.limiteMargem = v; desenhar(); }, "alerta"));
+  }), limite, function (v) { E.limiteMargem = v; desenhar(); }, "atencao"));
   f.appendChild(campoBusca("Buscar produto, nota, pedido ou RCA…"));
   raiz.appendChild(f);
 
-  raiz.appendChild(nota("No Power BI esta página existia duas vezes — <b>MARGEM X PRODUTO 5%</b> e " +
-    "<b>10%</b> — e as duas usavam a mesma coluna, que testava 5%. Aqui o limite é um botão: " +
-    "os cartões e a tabela mudam junto.", ""));
-
-  /* tabela dos piores */
   var piores = (D.margem.piores || []).filter(function (l) {
     if (n(l[8]) >= limite) return false;
     if (!E.busca) return true;
@@ -980,88 +1165,77 @@ function paginaMargem(raiz) {
     return alvo.indexOf(E.busca) !== -1;
   });
 
+  var btnCompleta = el("button", "btn-topo", "Baixar lista completa");
+  btnCompleta.type = "button";
+  btnCompleta.addEventListener("click", function () { baixarMargemCompleta(limite, btnCompleta); });
+
   var pt = painel("Itens abaixo de " + limite + "% de margem",
-    "Os piores do período, do menor percentual para cima. A lista traz os 1.200 piores itens; " +
-    "para a lista completa use o botão de exportar, que busca direto no banco.",
-    (function () {
-      var b = el("button", "btn-topo", "Baixar lista completa");
-      b.type = "button";
-      b.addEventListener("click", function () { baixarMargemCompleta(limite, b); });
-      return b;
-    })());
+    "Do pior percentual para cima. A tela traz os 1.200 piores do período; a lista completa sai pelo botão, direto do banco.",
+    btnCompleta);
   pt.corpo.remove();
   pt.appendChild(tabela({
     id: "margem",
     tituloCsv: "Itens abaixo de " + limite + "% de margem",
     filtrosExtras: function () { return [["Limite de margem", limite + "%"]]; },
     colunas: [
-      { titulo: "Data", celula: function (l) { return fData(l[0]); } },
-      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true },
-      { titulo: "Pedido", num: true, celula: function (l) { return l[2]; }, fraco: true },
-      { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
-      { titulo: "Cód", num: true, celula: function (l) { return l[4]; }, fraco: true },
+      { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
       { titulo: "Produto", celula: function (l) { return nomeProduto(l[4]); }, corta: true, destacar: true },
+      { titulo: "Cód", num: true, celula: function (l) { return l[4]; }, fraco: true },
+      { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
+      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true, fraco: true },
       { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[5], 0); } },
       { titulo: "Preço unit.", num: true, celula: function (l) { return fR$(l[6]); } },
-      { titulo: "Venda", num: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
-      { titulo: "Margem %", num: true, celula: function (l) {
-          var s = el("span", "selo " + (n(l[8]) < 0 ? "alerta" : n(l[8]) < limite ? "aviso" : "ok"), fPct(l[8], 2));
-          return s;
+      { titulo: "Venda", num: true, medida: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
+      { titulo: "Margem", num: true, celula: function (l) {
+          return el("span", "selo " + (n(l[8]) < 0 ? "grave" : "atencao"), fPct(l[8], 2));
         }, csv: function (l) { return fNum(l[8]); } },
       { titulo: "Margem R$", num: true, celula: function (l) { return fR$(l[9]); }, csv: function (l) { return fNum(l[9]); } }
     ],
     linhas: piores,
-    ordemInicial: 9, dirInicial: 1,
-    valorOrdem: function (l, i) { return [l[0], l[1], l[2], nomeRca(l[3]), l[4], nomeProduto(l[4]), n(l[5]), n(l[6]), n(l[7]), n(l[8]), n(l[9])][i]; },
-    total: function (todas, i) {
-      if (i === 0) return "Total (" + fInt(todas.length) + ")";
-      if (i === 8) return fR$(todas.reduce(function (s, l) { return s + n(l[7]); }, 0));
-      if (i === 10) return fR$(todas.reduce(function (s, l) { return s + n(l[9]); }, 0));
-      return "";
+    medida: function (l) { return n(l[7]); }, medidaCor: "viz-1",
+    ordemInicial: 8, dirInicial: 1,
+    valorOrdem: function (l, i) { return [l[0], nomeProduto(l[4]), l[4], nomeRca(l[3]), l[1], n(l[5]), n(l[6]), n(l[7]), n(l[8]), n(l[9])][i]; },
+    totais: function (todas) {
+      var venda = todas.reduce(function (s, l) { return s + n(l[7]); }, 0);
+      var marg = todas.reduce(function (s, l) { return s + n(l[9]); }, 0);
+      return [
+        { rotulo: "Itens na lista", numero: todas.length, formatar: fInt },
+        { rotulo: "Venda envolvida", numero: venda, formatar: fCurto, destaque: true, sub: fR$(venda) },
+        { rotulo: "Margem gerada", numero: marg, formatar: fCurto, sub: fR$(marg) },
+        { rotulo: "Margem média", numero: venda ? marg / venda * 100 : 0, formatar: function (v) { return fPct(v, 2); } }
+      ];
     },
     csv: true,
     aviso: "os 1.200 piores do período",
-    porPagina: 60
+    porPagina: 25
   }));
   raiz.appendChild(pt);
 
-  /* ranking por RCA */
   var porRca = (D.margem.rca || [])
     .filter(function (l) { return passaFiltroRca(l[0], null); })
     .map(function (l) { return { cod: l[0], itens: n(l[1]), venda: n(l[2]), margem: n(l[3]), abaixo: n(l[4]) }; })
     .sort(function (a, b) { return b.abaixo - a.abaixo; })
-    .slice(0, 15);
+    .slice(0, 12);
   if (porRca.length) {
     var pr = painel("Quem mais vendeu abaixo de 5% de margem",
-      "Quantidade de itens abaixo de 5% por vendedor — é a contagem que o cartão do Power BI mostrava.");
+      "Quantidade de itens abaixo de 5% por vendedor, no período filtrado.");
     var box = el("div");
     pr.corpo.appendChild(box);
     ranking(box, porRca.map(function (x) {
-      return { nome: nomeRca(x.cod), valor: x.abaixo, rotulo: fInt(x.abaixo) + " itens · " + fCurto(x.venda), cor: "brand-red-lt" };
-    }));
+      return { nome: nomeRca(x.cod), valor: x.abaixo, rotulo: fInt(x.abaixo) + " itens · " + fCurto(x.venda) };
+    }), { serie: "viz-3" });
     raiz.appendChild(pr);
   }
 
-  /* série mensal */
   var meses = D.margem.mes || [];
   if (meses.length) {
-    var pm = painel("Venda e margem mês a mês",
-      "Toda a base carregada, independente do período escolhido acima.");
-    var box2 = el("div", "gbox");
-    pm.corpo.appendChild(box2);
-    colunas(box2, meses.map(function (m) { return { rotulo: rotuloMes(m[0]), valor: n(m[2]), cor: "brand-blue-lt" }; }), {
-      altura: 250,
-      linha: meses.map(function (m) { return n(m[2]) ? n(m[3]) / n(m[2]) * 100 : null; }),
-      linhaCor: "green",
-      linhaFmt: function (v) { return fPct(v, 1); },
-      valorFmt: function (v) { return fCurtoSemMoeda(v); },
-      valorTooltip: function (v) { return fR$(v); },
-      aria: "Venda por mês"
+    var pm = painel("Venda e margem, mês a mês", "Toda a base carregada, independente do período escolhido acima.");
+    serieTempo(pm.corpo, meses.map(function (m) {
+      return { rotulo: rotuloMes(m[0]), barra: n(m[2]), linha: n(m[2]) ? n(m[3]) / n(m[2]) * 100 : null };
+    }), {
+      tituloBarra: "Venda (R$)", serieBarra: "viz-1", barraFmt: fCurtoSemMoeda, barraTooltip: fR$,
+      tituloLinha: "Margem (%)", serieLinha: "viz-4", linhaFmt: function (v) { return fPct(v, 1); }
     });
-    var leg = el("div", "glegenda");
-    leg.innerHTML = '<span><i style="background:var(--brand-blue-lt)"></i>Venda</span>' +
-                    '<span><i class="linha" style="background:var(--green)"></i>Margem %</span>';
-    pm.corpo.appendChild(leg);
     raiz.appendChild(pm);
   }
 }
@@ -1070,7 +1244,6 @@ function baixarMargemCompleta(limite, botao) {
   botao.disabled = true;
   botao.textContent = "Buscando no banco…";
   buscarDetalhe("margem_item", String(limite), 20000).then(function (res) {
-    var linhas = res.linhas || [];
     exportarCsv({
       id: "margem-completa",
       tituloCsv: "Itens abaixo de " + limite + "% de margem (lista completa)",
@@ -1088,7 +1261,7 @@ function baixarMargemCompleta(limite, botao) {
         { titulo: "Margem %", celula: function (l) { return fNum(l[9]); } },
         { titulo: "Margem R$", celula: function (l) { return fNum(l[10]); } }
       ]
-    }, linhas);
+    }, res.linhas || []);
     botao.disabled = false;
     botao.textContent = "Baixar lista completa";
   }).catch(function (e) {
@@ -1119,29 +1292,36 @@ function paginaPedidos(raiz) {
   var totalValor = linhas.reduce(function (s, p) { return s + n(p[7]); }, 0);
   var valorFora = fora.reduce(function (s, p) { return s + n(p[7]); }, 0);
 
-  raiz.appendChild(blocoKpis([
-    { rotulo: "Pedidos em aberto", valor: fInt(linhas.length), tom: "info",
-      sub: "não faturados nem cancelados" },
-    { rotulo: "Valor em carteira", valor: fCurto(totalValor), titulo: fR$(totalValor), tom: "money", grande: true,
-      sub: "soma do valor total dos pedidos" },
-    { rotulo: "Abaixo de " + limite + "% de margem", valor: fInt(fora.length), tom: "alerta",
-      sub: linhas.length ? fPct(fora.length / linhas.length * 100, 1) + " dos pedidos" : "—" },
-    { rotulo: "Valor fora da margem", valor: fCurto(valorFora), titulo: fR$(valorFora), tom: "alerta", grande: true,
-      sub: "para segurar antes de faturar" }
-  ]));
+  raiz.appendChild(heroi({
+    rotulo: "Valor parado na carteira",
+    valor: totalValor,
+    formatar: fCurto,
+    sub: "<b>" + fInt(linhas.length) + "</b> pedidos ainda não faturados. Destes, <b>" + fInt(fora.length) +
+         "</b> estão abaixo de " + limite + "% de margem, somando <b>" + fCurto(valorFora) + "</b> — " +
+         "é o que dá para segurar antes de faturar.",
+    kpis: [
+      { rotulo: "Pedidos em aberto", numero: linhas.length, formatar: fInt, tom: "info",
+        sub: "não faturados nem cancelados" },
+      { rotulo: "Abaixo de " + limite + "%", numero: fora.length, formatar: fInt, tom: "grave",
+        sub: linhas.length ? fPct(fora.length / linhas.length * 100, 1) + " dos pedidos" : "—" },
+      { rotulo: "Valor fora da margem", numero: valorFora, formatar: fCurto, titulo: fR$(valorFora), tom: "grave", grande: true,
+        sub: "para revisar antes do faturamento" },
+      { rotulo: "Ticket médio", numero: linhas.length ? totalValor / linhas.length : 0, formatar: fCurto,
+        tom: "atencao", grande: true, sub: "por pedido em aberto" }
+    ]
+  }));
 
-  var f = el("div", "filtros rise");
+  var f = el("div", "filtros sobe");
   f.appendChild(chipsMultiplos("Posição", posicoes.map(function (p) { return { valor: p, rotulo: p }; }),
     E.posicoes, function (novo) { E.posicoes = novo; desenhar(); }));
   f.appendChild(chips("Margem mínima", [15, 20, 21, 25].map(function (x) { return { valor: x, rotulo: x + "%" }; }),
-    limite, function (v) { E.limitePedido = v; desenhar(); }, "alerta"));
+    limite, function (v) { E.limitePedido = v; desenhar(); }, "atencao"));
   f.appendChild(seletorSupervisor());
   f.appendChild(campoBusca("Buscar pedido, cliente ou RCA…"));
   raiz.appendChild(f);
 
-  raiz.appendChild(nota("Esta é uma <b>foto de agora</b>: ela vem da carteira do WinThor a cada carga, " +
-    "não do período escolhido lá em cima. No Power BI a página abria vazia porque o filtro de data " +
-    "tinha ficado salvo em junho de 2025.", ""));
+  raiz.appendChild(nota("Esta página é uma <b>foto de agora</b>: vem da carteira do WinThor a cada carga, " +
+    "não do período escolhido lá em cima.", ""));
 
   var pt = painel("Carteira em aberto — filial 1",
     "Pedido de bonificação não tem venda, então fica sem margem: aparece como “—”.");
@@ -1151,37 +1331,42 @@ function paginaPedidos(raiz) {
     tituloCsv: "Pedidos em aberto",
     filtrosExtras: function () { return [["Margem mínima", limite + "%"], ["Posição", E.posicoes ? Array.from(E.posicoes).join(", ") : "todas"]]; },
     colunas: [
-      { titulo: "Data", celula: function (p) { return fData(p[0]); } },
-      { titulo: "Pedido", num: true, celula: function (p) { return p[1]; }, destacar: true },
-      { titulo: "Cód", num: true, celula: function (p) { return p[2]; }, fraco: true },
+      { titulo: "Data", celula: function (p) { return fData(p[0]); }, fixa: 1 },
       { titulo: "Cliente", celula: function (p) { return nomeCliente(p[2]); }, corta: true, destacar: true },
+      { titulo: "Pedido", num: true, celula: function (p) { return p[1]; }, destacar: true, fraco: true },
       { titulo: "RCA", celula: function (p) { return nomeRca(p[3]); }, corta: true, destacar: true },
       { titulo: "Supervisor", celula: function (p) { return nomeSupervisor(p[4]); }, fraco: true, corta: true },
       { titulo: "Tipo", celula: function (p) { return p[5]; }, fraco: true },
       { titulo: "Posição", celula: function (p) {
-          return el("span", "selo " + (p[6] === "LIBERADO" ? "ok" : p[6] === "BLOQUEADO" ? "alerta" : "neutro"), p[6]);
+          return el("span", "selo " + (p[6] === "LIBERADO" ? "bom" : p[6] === "BLOQUEADO" ? "grave" : "neutro"), p[6]);
         }, csv: function (p) { return p[6]; } },
-      { titulo: "Valor", num: true, celula: function (p) { return fR$(p[7]); }, csv: function (p) { return fNum(p[7]); } },
-      { titulo: "Qtd", num: true, celula: function (p) { return fNum(p[8], 0); } },
+      { titulo: "Valor", num: true, medida: true, celula: function (p) { return fR$(p[7]); }, csv: function (p) { return fNum(p[7]); } },
+      { titulo: "Qtd", num: true, celula: function (p) { return fNum(p[8], 0); }, fraco: true },
       { titulo: "Margem", num: true, celula: function (p) {
           if (p[9] == null) return "—";
-          return el("span", "selo " + (n(p[9]) < limite ? "alerta" : "ok"), fPct(p[9], 2));
+          return el("span", "selo " + (n(p[9]) < limite ? "grave" : "bom"), fPct(p[9], 2));
         }, csv: function (p) { return p[9] == null ? "" : fNum(p[9]); } }
     ],
     linhas: linhas,
-    ordemInicial: 10, dirInicial: 1,
+    medida: function (p) { return n(p[7]); }, medidaCor: "viz-1",
+    ordemInicial: 9, dirInicial: 1,
     valorOrdem: function (p, i) {
-      return [p[0], p[1], p[2], nomeCliente(p[2]), nomeRca(p[3]), nomeSupervisor(p[4]), p[5], p[6],
+      return [p[0], nomeCliente(p[2]), p[1], nomeRca(p[3]), nomeSupervisor(p[4]), p[5], p[6],
               n(p[7]), n(p[8]), p[9] == null ? null : n(p[9])][i];
     },
-    total: function (todas, i) {
-      if (i === 0) return "Total (" + fInt(todas.length) + ")";
-      if (i === 8) return fR$(todas.reduce(function (s, p) { return s + n(p[7]); }, 0));
-      return "";
+    totais: function (todas) {
+      var v = todas.reduce(function (s, p) { return s + n(p[7]); }, 0);
+      var fo = todas.filter(function (p) { return p[9] != null && n(p[9]) < limite; });
+      return [
+        { rotulo: "Pedidos", numero: todas.length, formatar: fInt },
+        { rotulo: "Valor em carteira", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) },
+        { rotulo: "Fora da margem", numero: fo.length, formatar: fInt },
+        { rotulo: "Valor fora", numero: fo.reduce(function (s, p) { return s + n(p[7]); }, 0), formatar: fCurto }
+      ];
     },
     csv: true,
     vazio: "Nenhum pedido em aberto com estes filtros.",
-    porPagina: 60
+    porPagina: 25
   }));
   raiz.appendChild(pt);
 }
@@ -1204,29 +1389,34 @@ function paginaDevolucoes(raiz) {
   var valorFiltrado = linhas.reduce(function (s, l) { return s + n(l[7]); }, 0);
   var valorRca = n(t.valor_rca), valorTotal = n(t.valor);
 
-  raiz.appendChild(blocoKpis([
-    { rotulo: "Devolvido no período", valor: fCurto(valorTotal), titulo: fR$(valorTotal), tom: "alerta", grande: true,
-      sub: fInt(t.notas) + " notas de entrada" },
-    { rotulo: "Responsabilidade do RCA", valor: fCurto(valorRca), titulo: fR$(valorRca), tom: "aviso", grande: true,
-      sub: valorTotal ? fPct(valorRca / valorTotal * 100, 1) + " do total" : "—",
-      ajuda: "Motivos comerciais (não pediu, preço errado, sem dinheiro…). Os de logística ficam fora." },
-    { rotulo: "No filtro atual", valor: fCurto(valorFiltrado), titulo: fR$(valorFiltrado), tom: "info", grande: true,
-      sub: fInt(linhas.length) + " linhas",
-      ajuda: "Este cartão segue os mesmos filtros da tabela — no Power BI o cartão ignorava o filtro de motivo e mostrava mais que o dobro." },
-    { rotulo: "Pelo total da nota", valor: fCurto(t.vltotal_somado), titulo: fR$(t.vltotal_somado), tom: "", grande: true,
-      sub: "número do BI antigo, superestimado",
-      ajuda: "O Power BI somava o total da NOTA em cada linha; notas com mais de uma linha entravam mais de uma vez." }
-  ]));
+  raiz.appendChild(heroi({
+    rotulo: "Devolvido no período",
+    valor: valorTotal,
+    formatar: fCurto,
+    sub: "<b>" + fInt(t.notas) + "</b> notas de entrada. <b>" + fCurto(valorRca) + "</b> (" +
+         fPct(valorTotal ? valorRca / valorTotal * 100 : 0, 1) + ") por motivos comerciais, " +
+         "que são os atribuíveis ao vendedor.",
+    kpis: [
+      { rotulo: "Responsabilidade do RCA", numero: valorRca, formatar: fCurto, titulo: fR$(valorRca), tom: "atencao", grande: true,
+        sub: valorTotal ? fPct(valorRca / valorTotal * 100, 1) + " do total" : "—",
+        ajuda: "Motivos comerciais: não pediu, preço errado, pedido repetido, sem dinheiro… Erro de carregamento, atraso e produto danificado ficam de fora." },
+      { rotulo: "No filtro atual", numero: valorFiltrado, formatar: fCurto, titulo: fR$(valorFiltrado), tom: "info", grande: true,
+        sub: fInt(linhas.length) + " linhas",
+        ajuda: "Este cartão segue exatamente os mesmos filtros da tabela abaixo." },
+      { rotulo: "Notas de entrada", numero: n(t.notas), formatar: fInt, tom: "roxo", sub: "no período" },
+      { rotulo: "Valor médio por nota", numero: n(t.notas) ? valorTotal / n(t.notas) : 0, formatar: fCurto,
+        grande: true, sub: "devolvido por nota" }
+    ]
+  }));
 
-  var f = el("div", "filtros rise");
+  var f = el("div", "filtros sobe");
   f.appendChild(chips("Responsabilidade", [
     { valor: "todos", rotulo: "Todos os motivos" },
     { valor: "rca", rotulo: "Só do vendedor" }
-  ], E.soMotivoRca ? "rca" : "todos", function (v) { E.soMotivoRca = (v === "rca"); desenhar(); }, "aviso"));
+  ], E.soMotivoRca ? "rca" : "todos", function (v) { E.soMotivoRca = (v === "rca"); desenhar(); }, "atencao"));
   var gm = el("div", "fgrupo");
   gm.appendChild(el("span", "frot", "Motivo"));
   var sel = el("select");
-  sel.style.cssText = "background:var(--surface-2);border:1px solid var(--line-1);color:var(--txt-1);border-radius:10px;padding:7px 10px;font-size:12.5px;font-weight:700;cursor:pointer;max-width:280px;";
   var o0 = el("option", null, "Todos"); o0.value = ""; sel.appendChild(o0);
   (D.motivos || []).forEach(function (m) {
     var o = el("option", null, m[1] + (m[2] ? " ·" : ""));
@@ -1241,37 +1431,33 @@ function paginaDevolucoes(raiz) {
   f.appendChild(campoBusca("Buscar nota, cliente, RCA ou motivo…"));
   raiz.appendChild(f);
 
-  /* rosca: RCA x empresa */
   var pg = painel("De quem é a devolução",
     "Motivos comerciais são do vendedor; erro de carregamento, atraso na entrega e produto danificado são da operação.");
   var caixa = el("div");
   pg.corpo.appendChild(caixa);
-  rosca(caixa, [
-    { rotulo: "Do vendedor", valor: valorRca, cor: "amber" },
-    { rotulo: "Da operação", valor: Math.max(0, valorTotal - valorRca), cor: "info" }
-  ], "Valor pela linha da nota (quantidade × preço contábil), que é somável.");
+  barraProporcao(caixa, [
+    { rotulo: "Do vendedor", valor: valorRca, cor: "atencao" },
+    { rotulo: "Da operação", valor: Math.max(0, valorTotal - valorRca), cor: "viz-3" }
+  ], "Valor pela linha da nota (quantidade × preço contábil), que é somável. O total das notas de entrada no período, com ST e despesas, é " + fCurto(t.vltotal_somado) + ".");
   raiz.appendChild(pg);
 
-  /* ranking por RCA no período */
   var porRca = new Map();
-  linhas.forEach(function (l) {
-    porRca.set(l[3], n(porRca.get(l[3])) + n(l[7]));
-  });
+  linhas.forEach(function (l) { porRca.set(l[3], n(porRca.get(l[3])) + n(l[7])); });
   var listaRca = Array.from(porRca.entries())
     .map(function (e) { return { cod: e[0], valor: e[1] }; })
     .sort(function (a, b) { return b.valor - a.valor; })
-    .slice(0, 15);
+    .slice(0, 12);
   if (listaRca.length) {
-    var pr = painel("Devolução por RCA", "Somente o que está nos filtros atuais.");
+    var pr = painel("Devolução por vendedor", "Somente o que está nos filtros atuais.");
     var box = el("div");
     pr.corpo.appendChild(box);
     ranking(box, listaRca.map(function (x) {
-      return { nome: nomeRca(x.cod), valor: x.valor, rotulo: fCurto(x.valor), cor: "brand-red-lt" };
-    }));
+      return { nome: nomeRca(x.cod), valor: x.valor, rotulo: fCurto(x.valor) };
+    }), { serie: "viz-3" });
     raiz.appendChild(pr);
   }
 
-  var pt = painel("Notas devolvidas", "As 4.000 maiores do período. Clique numa linha para ver todas as devoluções daquele RCA.");
+  var pt = painel("Notas devolvidas", "As 4.000 maiores do período. Clique numa linha para ver todas as devoluções do vendedor.");
   pt.corpo.remove();
   pt.appendChild(tabela({
     id: "devolucao",
@@ -1281,55 +1467,52 @@ function paginaDevolucoes(raiz) {
               ["Só responsabilidade do RCA", E.soMotivoRca ? "sim" : "não"]];
     },
     colunas: [
-      { titulo: "Data", celula: function (l) { return fData(l[0]); } },
-      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true },
-      { titulo: "Cód", num: true, celula: function (l) { return l[2]; }, fraco: true },
+      { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
       { titulo: "Cliente", celula: function (l) { return nomeCliente(l[2]); }, corta: true, destacar: true },
+      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true, fraco: true },
       { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
       { titulo: "Motivo", celula: function (l) {
           var m = MOTIVO_MAPA[l[4]];
-          var s = el("span", "selo " + (m && m[1] ? "aviso" : "neutro"), m ? m[0] : "—");
-          return s;
+          return el("span", "selo " + (m && m[1] ? "atencao" : "neutro"), m ? m[0] : "—");
         }, csv: function (l) { return motivoDe(l[4]); } },
       { titulo: "Filial", num: true, celula: function (l) { return l[5]; }, fraco: true },
-      { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[6], 0); } },
-      { titulo: "Valor devolvido", num: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
+      { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[6], 0); }, fraco: true },
+      { titulo: "Valor devolvido", num: true, medida: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
       { titulo: "Total da nota", num: true, celula: function (l) { return fR$(l[8]); }, fraco: true, csv: function (l) { return fNum(l[8]); } }
     ],
     linhas: linhas,
-    ordemInicial: 8,
+    medida: function (l) { return n(l[7]); }, medidaCor: "viz-3",
+    ordemInicial: 7,
     valorOrdem: function (l, i) {
-      return [l[0], l[1], l[2], nomeCliente(l[2]), nomeRca(l[3]), motivoDe(l[4]), l[5], n(l[6]), n(l[7]), n(l[8])][i];
+      return [l[0], nomeCliente(l[2]), l[1], nomeRca(l[3]), motivoDe(l[4]), l[5], n(l[6]), n(l[7]), n(l[8])][i];
     },
-    total: function (todas, i) {
-      if (i === 0) return "Total (" + fInt(todas.length) + ")";
-      if (i === 8) return fR$(todas.reduce(function (s, l) { return s + n(l[7]); }, 0));
-      return "";
+    totais: function (todas) {
+      var v = todas.reduce(function (s, l) { return s + n(l[7]); }, 0);
+      var doRca = todas.filter(function (l) { return MOTIVO_MAPA[l[4]] && MOTIVO_MAPA[l[4]][1]; })
+                       .reduce(function (s, l) { return s + n(l[7]); }, 0);
+      return [
+        { rotulo: "Linhas", numero: todas.length, formatar: fInt },
+        { rotulo: "Valor devolvido", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) },
+        { rotulo: "Do vendedor", numero: doRca, formatar: fCurto },
+        { rotulo: "Participação do vendedor", numero: v ? doRca / v * 100 : 0, formatar: function (x) { return fPct(x, 1); } }
+      ];
     },
     aoClicar: function (l) { abrirDevolucoesDoRca(l[3]); },
     csv: true,
-    porPagina: 60
+    porPagina: 25
   }));
   raiz.appendChild(pt);
 
   var meses = D.devolucao.mes || [];
   if (meses.length) {
-    var pm = painel("Devolução mês a mês", "Barra: total devolvido. Linha: quanto disso é responsabilidade do vendedor.");
-    var box2 = el("div", "gbox");
-    pm.corpo.appendChild(box2);
-    colunas(box2, meses.map(function (m) { return { rotulo: rotuloMes(m[0]), valor: n(m[1]), cor: "brand-red-lt" }; }), {
-      altura: 240,
-      linha: meses.map(function (m) { return n(m[1]) ? n(m[2]) / n(m[1]) * 100 : null; }),
-      linhaCor: "amber",
-      linhaFmt: function (v) { return fPct(v, 0); },
-      valorFmt: function (v) { return fCurtoSemMoeda(v); },
-      valorTooltip: function (v) { return fR$(v); },
-      aria: "Devolução por mês"
+    var pm = painel("Devolução mês a mês", "Toda a base carregada, independente do período escolhido acima.");
+    serieTempo(pm.corpo, meses.map(function (m) {
+      return { rotulo: rotuloMes(m[0]), barra: n(m[1]), linha: n(m[1]) ? n(m[2]) / n(m[1]) * 100 : null };
+    }), {
+      tituloBarra: "Devolvido (R$)", serieBarra: "viz-3", barraFmt: fCurtoSemMoeda, barraTooltip: fR$,
+      tituloLinha: "Quanto disso é do vendedor (%)", serieLinha: "viz-2",
+      linhaFmt: function (v) { return fPct(v, 0); }
     });
-    var leg = el("div", "glegenda");
-    leg.innerHTML = '<span><i style="background:var(--brand-red-lt)"></i>Devolvido</span>' +
-                    '<span><i class="linha" style="background:var(--amber)"></i>% do vendedor</span>';
-    pm.corpo.appendChild(leg);
     raiz.appendChild(pm);
   }
 }
@@ -1341,33 +1524,35 @@ function abrirDevolucoesDoRca(codusur) {
 
   buscarDetalhe("devolucao_rca", codusur).then(function (res) {
     limpar(corpo);
-    var linhas = res.linhas || [];
     corpo.appendChild(tabela({
       id: "devol_rca_" + codusur,
       tituloCsv: "Devoluções — " + nomeRca(codusur),
       colunas: [
-        { titulo: "Data", celula: function (l) { return fData(l[0]); } },
-        { titulo: "Nota", num: true, celula: function (l) { return l[1]; } },
+        { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
         { titulo: "Cliente", celula: function (l) { return nomeCliente(l[2]); }, corta: true },
+        { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, fraco: true },
         { titulo: "Motivo", celula: function (l) { return motivoDe(l[3]); }, corta: true },
         { titulo: "Filial", num: true, celula: function (l) { return l[4]; }, fraco: true },
-        { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[5], 0); } },
-        { titulo: "Valor devolvido", num: true, celula: function (l) { return fR$(l[6]); }, csv: function (l) { return fNum(l[6]); } },
+        { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[5], 0); }, fraco: true },
+        { titulo: "Valor devolvido", num: true, medida: true, celula: function (l) { return fR$(l[6]); }, csv: function (l) { return fNum(l[6]); } },
         { titulo: "Total da nota", num: true, celula: function (l) { return fR$(l[7]); }, fraco: true }
       ],
-      linhas: linhas,
+      linhas: res.linhas || [],
+      medida: function (l) { return n(l[6]); }, medidaCor: "viz-3",
       ordemInicial: 6,
-      valorOrdem: function (l, i) { return [l[0], l[1], nomeCliente(l[2]), motivoDe(l[3]), l[4], n(l[5]), n(l[6]), n(l[7])][i]; },
-      total: function (todas, i) {
-        if (i === 0) return "Total (" + fInt(todas.length) + ")";
-        if (i === 6) return fR$(todas.reduce(function (s, l) { return s + n(l[6]); }, 0));
-        return "";
+      valorOrdem: function (l, i) { return [l[0], nomeCliente(l[2]), l[1], motivoDe(l[3]), l[4], n(l[5]), n(l[6]), n(l[7])][i]; },
+      totais: function (todas) {
+        var v = todas.reduce(function (s, l) { return s + n(l[6]); }, 0);
+        return [
+          { rotulo: "Notas", numero: todas.length, formatar: fInt },
+          { rotulo: "Valor devolvido", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) }
+        ];
       },
-      csv: true, porPagina: 50,
+      csv: true, porPagina: 25,
       vazio: "Nenhuma devolução deste RCA no período."
     }));
   }).catch(function (e) {
-    limpar(corpo).appendChild(nota("Não consegui buscar: " + e.message, "alerta"));
+    limpar(corpo).appendChild(nota("Não consegui buscar: " + e.message, "grave"));
   });
 }
 
@@ -1375,7 +1560,7 @@ function abrirDevolucoesDoRca(codusur) {
  * Barra de período
  * ------------------------------------------------------------------------ */
 function barraPeriodo() {
-  var b = el("div", "periodo rise");
+  var b = el("div", "periodo sobe");
   b.appendChild(el("span", "rot", "Período"));
 
   var sel = el("select");
@@ -1410,7 +1595,7 @@ function barraPeriodo() {
   b.appendChild(ate);
 
   var dias = Math.round((new Date(E.ate) - new Date(E.de)) / 86400000) + 1;
-  b.appendChild(el("span", "badge", fData(E.de) + " a " + fData(E.ate) + " · " + fInt(dias) + (dias === 1 ? " dia" : " dias")));
+  b.appendChild(el("span", "badge", fData(E.de) + " → " + fData(E.ate) + " · " + fInt(dias) + (dias === 1 ? " dia" : " dias")));
   return b;
 }
 
@@ -1502,21 +1687,13 @@ function carregar(forcar) {
   if (carregandoPeriodo) return;
   carregandoPeriodo = true;
   trabalhando(true);
-  /* O primeiro acesso depois de um tempo parado acorda a função e o pooler
-     juntos e pode levar dezenas de segundos. Melhor dizer isso do que deixar
-     a tela parada dando a impressão de travamento. */
   var demorou = setTimeout(function () {
     var t = document.getElementById("carregandoTexto");
     if (t) t.textContent = "Primeiro acesso depois de um tempo parado — o banco está acordando. Isso leva alguns segundos.";
   }, 7000);
   buscarDados(forcar).then(function (dados) {
     clearTimeout(demorou);
-    D = dados;
-    MOTIVO_MAPA = {};
-    (D.motivos || []).forEach(function (m) { MOTIVO_MAPA[m[0]] = [m[1], m[2]]; });
-    E.de = String(D.periodo.de).slice(0, 10);
-    E.ate = String(D.periodo.ate).slice(0, 10);
-    E.pag = {};
+    aplicar(dados);
     carregandoPeriodo = false;
     trabalhando(false);
     document.getElementById("raiz").hidden = false;
@@ -1529,6 +1706,15 @@ function carregar(forcar) {
     trabalhando(false);
     falhar(e);
   });
+}
+
+function aplicar(dados) {
+  D = dados;
+  MOTIVO_MAPA = {};
+  (D.motivos || []).forEach(function (m) { MOTIVO_MAPA[m[0]] = [m[1], m[2]]; });
+  E.de = String(D.periodo.de).slice(0, 10);
+  E.ate = String(D.periodo.ate).slice(0, 10);
+  E.pag = {};
 }
 
 function falhar(e) {
@@ -1564,7 +1750,7 @@ function desenhar(manterRolagem) {
   raiz.appendChild(barraPeriodo());
 
   var corpo = el("div");
-  corpo.style.cssText = "display:flex;flex-direction:column;gap:18px;margin-top:18px;";
+  corpo.style.cssText = "display:flex;flex-direction:column;gap:16px;margin-top:16px;";
   raiz.appendChild(corpo);
 
   if (E.pagina === "comissao") paginaComissao(corpo);
@@ -1617,9 +1803,7 @@ document.getElementById("btn-atualizar").addEventListener("click", function () {
   var b = this;
   b.disabled = true; b.classList.add("girando");
   buscarDados(true).then(function (dados) {
-    D = dados;
-    MOTIVO_MAPA = {};
-    (D.motivos || []).forEach(function (m) { MOTIVO_MAPA[m[0]] = [m[1], m[2]]; });
+    aplicar(dados);
     b.disabled = false; b.classList.remove("girando");
     desenhar(true);
   }).catch(function (e) {
@@ -1628,7 +1812,6 @@ document.getElementById("btn-atualizar").addEventListener("click", function () {
   });
 });
 
-/* período inicial: o mês corrente */
 E.ate = hoje();
 E.de = primeiroDiaDoMes(E.ate);
 carregar(false);
