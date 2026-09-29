@@ -215,6 +215,7 @@ Site estático mais duas funções serverless, sem framework.
 |---|---|
 | `index.html` | A casca: menu, cabeçalho e o CSS do sistema. |
 | `app.js` | As quatro páginas, os gráficos e as tabelas. |
+| `planilha.js` | Gera o `.xlsx` da exportação, sem biblioteca externa. |
 | `api/dados.js` | `/api/dados?de=&ate=` → `comercial.painel_dados()`. |
 | `api/detalhe.js` | `/api/detalhe?tipo=…` → `comercial.painel_detalhe()`, para as listas grandes. |
 | `api/_db.js` | A conexão com o banco, compartilhada pelas duas rotas. |
@@ -262,6 +263,23 @@ voltar ao normal, basta trocar a variável — o código lê a porta do ambiente
 chamada depois de um tempo parado leva de 10 a 30 segundos; as seguintes respondem
 em menos de 1s. Por isso `maxDuration` é 60s e o `_db.js` refaz a conexão quando o
 erro é de conexão. Se o painel demorar às 7h da manhã, é isso — não é erro.
+
+### A exportação
+
+Toda tabela tem **Exportar Excel**, e o arquivo sai formatado: faixa de identidade
+da Lube em azul-marinho e dourado, os **filtros aplicados escritos por extenso**
+logo abaixo, cabeçalho congelado, **filtro automático** em todas as colunas,
+linhas alternadas, valor negativo em vermelho e linha de total.
+
+O que importa mais que o visual: **número vai como número**. Moeda com formato de
+moeda, percentual com formato de percentual, data que o Excel entende como data.
+Quem recebe consegue somar, ordenar e filtrar sem retrabalho — coisa que um CSV
+de texto não permite.
+
+O arquivo é montado em `web/planilha.js`, **sem biblioteca externa**: um `.xlsx` é
+um ZIP com alguns XML dentro, e escrevê-lo à mão custa menos código do que o peso
+do download de uma biblioteca de CDN — que ainda quebraria se a rede da empresa
+bloqueasse o domínio.
 
 ### Acesso
 

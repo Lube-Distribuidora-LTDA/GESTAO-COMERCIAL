@@ -777,9 +777,10 @@ function tabela(cfg) {
     dir.appendChild(sel);
   }
   if (cfg.csv) {
-    var bx = el("button", "btn-limpar", "Exportar CSV");
+    var bx = el("button", "btn-limpar", "Exportar Excel");
     bx.type = "button";
-    bx.addEventListener("click", function () { exportarCsv(cfg, linhas); });
+    bx.title = "Baixa a lista filtrada em .xlsx, já formatada";
+    bx.addEventListener("click", function () { exportarPlanilha(cfg, linhas); });
     dir.appendChild(bx);
   }
   if (totalPaginas > 1) {
@@ -813,35 +814,47 @@ function escreverComDestaque(td, texto, termo) {
   td.appendChild(document.createTextNode(s.slice(i + termo.length)));
 }
 
-/* Planilha sai com a cara do sistema e com os filtros escritos dentro —
-   quem recebe precisa saber que aquilo é um recorte, não a lista inteira. */
-function exportarCsv(cfg, linhas) {
-  var sep = ";";
-  var out = [];
-  out.push("LUBE DISTRIBUIDORA LTDA — Central Comercial");
-  out.push(cfg.tituloCsv || cfg.id);
-  out.push("Período" + sep + fData(E.de) + " a " + fData(E.ate));
-  out.push("Filiais" + sep + (E.filiais ? Array.from(E.filiais).join(", ") : "todas"));
-  out.push("Supervisor" + sep + (E.supervisor ? nomeSupervisor(E.supervisor) : "todos"));
-  if (E.busca) out.push("Busca" + sep + E.busca);
-  if (cfg.filtrosExtras) cfg.filtrosExtras().forEach(function (f) { out.push(f[0] + sep + f[1]); });
-  out.push("Gerado em" + sep + new Date().toLocaleString("pt-BR"));
-  out.push("Linhas" + sep + linhas.length);
-  out.push("");
-  out.push(cfg.colunas.map(function (c) { return c.titulo; }).join(sep));
-  linhas.forEach(function (l) {
-    out.push(cfg.colunas.map(function (c) {
-      var v = c.csv ? c.csv(l) : c.celula(l, 0);
-      if (v instanceof Node) v = v.textContent;
-      return String(v == null ? "" : v).replace(/[\r\n;]/g, " ");
-    }).join(sep));
+/* A planilha sai com a cara do sistema e com os filtros escritos dentro — quem
+   recebe precisa saber que aquilo é um recorte, não a lista inteira. O arquivo
+   é .xlsx de verdade (ver planilha.js): número é número, não texto, então quem
+   abre consegue somar, ordenar e filtrar sem retrabalho. */
+function exportarPlanilha(cfg, linhas) {
+  var filtros = [
+    ["Período", fData(E.de) + " a " + fData(E.ate)],
+    ["Filiais", E.filiais ? Array.from(E.filiais).join(", ") : "todas"],
+    ["Supervisor", E.supervisor ? nomeSupervisor(E.supervisor) : "todos"]
+  ];
+  if (E.busca) filtros.push(["Busca", E.busca]);
+  if (cfg.filtrosExtras) cfg.filtrosExtras().forEach(function (f) { filtros.push(f); });
+  filtros.push(["Gerado em", new Date().toLocaleString("pt-BR")]);
+  filtros.push(["Linhas", fInt(linhas.length)]);
+
+  var colunas = cfg.colunas.map(function (c) {
+    return {
+      titulo: c.titulo,
+      tipo: c.tipo || "texto",
+      somar: c.somar,
+      /* coluna sem valor cru declarado ainda exporta: vai o texto da tela */
+      valor: c.valor || function (l, i) {
+        var v = c.celula(l, i);
+        return v instanceof Node ? v.textContent : v;
+      }
+    };
   });
-  var blob = new Blob(["﻿" + out.join("\r\n")], { type: "text/csv;charset=utf-8;" });
-  var a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "comercial-" + cfg.id + "-" + E.de + "-a-" + E.ate + ".csv";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+
+  var nome = cfg.tituloCsv || cfg.id;
+  try {
+    Planilha.baixar({
+      arquivo: "comercial-" + cfg.id + "-" + E.de + "-a-" + E.ate + ".xlsx",
+      titulo: nome,
+      aba: cfg.aba || nome,
+      filtros: filtros,
+      colunas: colunas,
+      linhas: linhas
+    });
+  } catch (e) {
+    alert("Não consegui gerar a planilha: " + (e && e.message ? e.message : e));
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -993,36 +1006,51 @@ function paginaComissao(raiz) {
 
   var essencial = E.colunas === "essencial";
   var cols = [
-    { titulo: "#", celula: function (r, i) {
+    { titulo: "#", tipo: "inteiro", somar: false, valor: function (r, i) { return i + 1; },
+      celula: function (r, i) {
         var pg = E.pag["comissao"] || 1;
         var pp = E.porPagina["comissao"] || 25;
         var pos = (pp >= 99999 ? 0 : (pg - 1) * pp) + i + 1;
         return el("span", "pos" + (pos <= 3 ? " top" : ""), String(pos));
-      }, fixa: 1, csv: function () { return ""; } },
-    { titulo: "RCA", celula: function (r) { return r.nome; }, destacar: true, corta: true, fixa: 2 },
-    { titulo: "Supervisor", celula: function (r) { return r.supervisor; }, fraco: true, corta: true }
+      }, fixa: 1 },
+    { titulo: "RCA", tipo: "texto", valor: function (r) { return r.nome; },
+      celula: function (r) { return r.nome; }, destacar: true, corta: true, fixa: 2 },
+    { titulo: "Supervisor", tipo: "texto", valor: function (r) { return r.supervisor; },
+      celula: function (r) { return r.supervisor; }, fraco: true, corta: true }
   ];
-  if (E.grao !== "rca") cols.push({ titulo: "Filial", num: true, celula: function (r) { return r.codfilial; } });
+  if (E.grao !== "rca") cols.push({ titulo: "Filial", num: true, tipo: "inteiro", somar: false,
+    valor: function (r) { return r.codfilial; }, celula: function (r) { return r.codfilial; } });
   cols.push(
-    { titulo: "Total líquido", num: true, celula: function (r) { return fR$(r.totalLiquido); }, csv: function (r) { return fNum(r.totalLiquido); } },
-    { titulo: "Massa", num: true, celula: function (r) { return fR$(r.massa); }, csv: function (r) { return fNum(r.massa); } },
-    { titulo: "Margem", num: true, celula: function (r) { return fPct(r.perc, 2); }, csv: function (r) { return fNum(r.perc); } },
-    { titulo: "Faixa", num: true, celula: function (r) {
+    { titulo: "Total líquido", num: true, tipo: "moeda", valor: function (r) { return r.totalLiquido; },
+      celula: function (r) { return fR$(r.totalLiquido); } },
+    { titulo: "Massa", num: true, tipo: "moeda", valor: function (r) { return r.massa; },
+      celula: function (r) { return fR$(r.massa); } },
+    { titulo: "Margem", num: true, tipo: "percentual", valor: function (r) { return r.perc; },
+      celula: function (r) { return fPct(r.perc, 2); } },
+    { titulo: "Faixa", num: true, tipo: "percentual", valor: function (r) { return r.faixa * 100; },
+      celula: function (r) {
         return el("span", "selo " + (r.faixa >= 0.03 ? "bom" : r.faixa <= 0.01 ? "grave" : "atencao"), fPct(r.faixa * 100, 2));
-      }, csv: function (r) { return fNum(r.faixa * 100); } },
-    { titulo: "Comissão", num: true, medida: true, celula: function (r) { return fR$(r.comissao); }, csv: function (r) { return fNum(r.comissao); } }
+      } },
+    { titulo: "Comissão", num: true, medida: true, tipo: "moeda", valor: function (r) { return r.comissao; },
+      celula: function (r) { return fR$(r.comissao); } }
   );
   if (!essencial) {
     cols.push(
-      { titulo: "CMV venda", num: true, celula: function (r) { return fR$(r.cmvVenda); }, csv: function (r) { return fNum(r.cmvVenda); } },
-      { titulo: "CMV líquido", num: true, celula: function (r) { return fR$(r.cmvLiquido); }, csv: function (r) { return fNum(r.cmvLiquido); } },
-      { titulo: "ST", num: true, celula: function (r) { return fR$(r.st); }, csv: function (r) { return fNum(r.st); } },
-      { titulo: "Desc. fin.", num: true, celula: function (r) { return fR$(r.descfin); }, csv: function (r) { return fNum(r.descfin); } }
+      { titulo: "CMV venda", num: true, tipo: "moeda", valor: function (r) { return r.cmvVenda; },
+        celula: function (r) { return fR$(r.cmvVenda); } },
+      { titulo: "CMV líquido", num: true, tipo: "moeda", valor: function (r) { return r.cmvLiquido; },
+        celula: function (r) { return fR$(r.cmvLiquido); } },
+      { titulo: "ST", num: true, tipo: "moeda", valor: function (r) { return r.st; },
+        celula: function (r) { return fR$(r.st); } },
+      { titulo: "Desc. fin.", num: true, tipo: "moeda", valor: function (r) { return r.descfin; },
+        celula: function (r) { return fR$(r.descfin); } }
     );
   }
   cols.push(
-    { titulo: "Notas", num: true, celula: function (r) { return fInt(r.notas); }, fraco: true },
-    { titulo: "Clientes", num: true, celula: function (r) { return fInt(r.clientes); }, fraco: true }
+    { titulo: "Notas", num: true, tipo: "inteiro", valor: function (r) { return r.notas; },
+      celula: function (r) { return fInt(r.notas); }, fraco: true },
+    { titulo: "Clientes", num: true, tipo: "inteiro", valor: function (r) { return r.clientes; },
+      celula: function (r) { return fInt(r.clientes); }, fraco: true }
   );
 
   var campos = ["", "nome", "supervisor"];
@@ -1114,17 +1142,28 @@ function abrirNotasDoRca(r) {
       id: "comissao_nf_" + r.codusur,
       tituloCsv: "Comissão nota a nota — " + r.nome,
       colunas: [
-        { titulo: "Data", celula: function (x) { return fData(x.dtmov); }, fixa: 1 },
-        { titulo: "Nota", num: true, celula: function (x) { return x.numnota; } },
-        { titulo: "Pedido", num: true, celula: function (x) { return x.numped; }, fraco: true },
-        { titulo: "Filial", num: true, celula: function (x) { return x.codfilial; }, fraco: true },
-        { titulo: "Total líquido", num: true, medida: true, celula: function (x) { return fR$(x.totalLiquido); } },
-        { titulo: "Massa", num: true, celula: function (x) { return fR$(x.massa); } },
-        { titulo: "Margem", num: true, celula: function (x) { return fPct(x.perc, 2); } },
-        { titulo: "Faixa", num: true, celula: function (x) { return fPct(x.faixa * 100, 2); } },
-        { titulo: "Comissão", num: true, celula: function (x) { return fR$(x.comissao); } },
-        { titulo: "CMV líquido", num: true, celula: function (x) { return fR$(x.cmvLiquido); }, fraco: true },
-        { titulo: "ST", num: true, celula: function (x) { return fR$(x.st); }, fraco: true }
+        { titulo: "Data", tipo: "data", valor: function (x) { return x.dtmov; },
+          celula: function (x) { return fData(x.dtmov); }, fixa: 1 },
+        { titulo: "Nota", num: true, tipo: "inteiro", somar: false, valor: function (x) { return x.numnota; },
+          celula: function (x) { return x.numnota; } },
+        { titulo: "Pedido", num: true, tipo: "inteiro", somar: false, valor: function (x) { return x.numped; },
+          celula: function (x) { return x.numped; }, fraco: true },
+        { titulo: "Filial", num: true, tipo: "inteiro", somar: false, valor: function (x) { return x.codfilial; },
+          celula: function (x) { return x.codfilial; }, fraco: true },
+        { titulo: "Total líquido", num: true, medida: true, tipo: "moeda", valor: function (x) { return x.totalLiquido; },
+          celula: function (x) { return fR$(x.totalLiquido); } },
+        { titulo: "Massa", num: true, tipo: "moeda", valor: function (x) { return x.massa; },
+          celula: function (x) { return fR$(x.massa); } },
+        { titulo: "Margem", num: true, tipo: "percentual", valor: function (x) { return x.perc; },
+          celula: function (x) { return fPct(x.perc, 2); } },
+        { titulo: "Faixa", num: true, tipo: "percentual", valor: function (x) { return x.faixa * 100; },
+          celula: function (x) { return fPct(x.faixa * 100, 2); } },
+        { titulo: "Comissão", num: true, tipo: "moeda", valor: function (x) { return x.comissao; },
+          celula: function (x) { return fR$(x.comissao); } },
+        { titulo: "CMV líquido", num: true, tipo: "moeda", valor: function (x) { return x.cmvLiquido; },
+          celula: function (x) { return fR$(x.cmvLiquido); }, fraco: true },
+        { titulo: "ST", num: true, tipo: "moeda", valor: function (x) { return x.st; },
+          celula: function (x) { return fR$(x.st); }, fraco: true }
       ],
       linhas: linhas,
       medida: function (x) { return x.totalLiquido; }, medidaCor: "viz-1",
@@ -1205,18 +1244,28 @@ function paginaMargem(raiz) {
     tituloCsv: "Itens abaixo de " + limite + "% de margem",
     filtrosExtras: function () { return [["Limite de margem", limite + "%"]]; },
     colunas: [
-      { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
-      { titulo: "Produto", celula: function (l) { return nomeProduto(l[4]); }, corta: true, destacar: true },
-      { titulo: "Cód", num: true, celula: function (l) { return l[4]; }, fraco: true },
-      { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
-      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true, fraco: true },
-      { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[5], 0); } },
-      { titulo: "Preço unit.", num: true, celula: function (l) { return fR$(l[6]); } },
-      { titulo: "Venda", num: true, medida: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
-      { titulo: "Margem", num: true, celula: function (l) {
+      { titulo: "Data", tipo: "data", valor: function (l) { return l[0]; },
+        celula: function (l) { return fData(l[0]); }, fixa: 1 },
+      { titulo: "Produto", tipo: "texto", valor: function (l) { return nomeProduto(l[4]); },
+        celula: function (l) { return nomeProduto(l[4]); }, corta: true, destacar: true },
+      { titulo: "Cód", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[4]; },
+        celula: function (l) { return l[4]; }, fraco: true },
+      { titulo: "RCA", tipo: "texto", valor: function (l) { return nomeRca(l[3]); },
+        celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
+      { titulo: "Nota", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[1]; },
+        celula: function (l) { return l[1]; }, destacar: true, fraco: true },
+      { titulo: "Qtd", num: true, tipo: "inteiro", valor: function (l) { return l[5]; },
+        celula: function (l) { return fNum(l[5], 0); } },
+      { titulo: "Preço unit.", num: true, tipo: "moeda", somar: false, valor: function (l) { return l[6]; },
+        celula: function (l) { return fR$(l[6]); } },
+      { titulo: "Venda", num: true, medida: true, tipo: "moeda", valor: function (l) { return l[7]; },
+        celula: function (l) { return fR$(l[7]); } },
+      { titulo: "Margem", num: true, tipo: "percentual", valor: function (l) { return l[8]; },
+        celula: function (l) {
           return el("span", "selo " + (n(l[8]) < 0 ? "grave" : "atencao"), fPct(l[8], 2));
-        }, csv: function (l) { return fNum(l[8]); } },
-      { titulo: "Margem R$", num: true, celula: function (l) { return fR$(l[9]); }, csv: function (l) { return fNum(l[9]); } }
+        } },
+      { titulo: "Margem R$", num: true, tipo: "moeda", valor: function (l) { return l[9]; },
+        celula: function (l) { return fR$(l[9]); } }
     ],
     linhas: piores,
     medida: function (l) { return n(l[7]); }, medidaCor: "viz-1",
@@ -1271,22 +1320,22 @@ function baixarMargemCompleta(limite, botao) {
   botao.disabled = true;
   botao.textContent = "Buscando no banco…";
   buscarDetalhe("margem_item", String(limite), 20000).then(function (res) {
-    exportarCsv({
+    exportarPlanilha({
       id: "margem-completa",
       tituloCsv: "Itens abaixo de " + limite + "% de margem (lista completa)",
       filtrosExtras: function () { return [["Limite de margem", limite + "%"], ["Teto de linhas", "20.000"]]; },
       colunas: [
-        { titulo: "Data", celula: function (l) { return fData(l[0]); } },
-        { titulo: "Nota", celula: function (l) { return l[1]; } },
-        { titulo: "Pedido", celula: function (l) { return l[2]; } },
-        { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); } },
-        { titulo: "Cód produto", celula: function (l) { return l[4]; } },
-        { titulo: "Produto", celula: function (l) { return l[5] || nomeProduto(l[4]); } },
-        { titulo: "Qtd", celula: function (l) { return fNum(l[6], 0); } },
-        { titulo: "Preço unit.", celula: function (l) { return fNum(l[7]); } },
-        { titulo: "Venda", celula: function (l) { return fNum(l[8]); } },
-        { titulo: "Margem %", celula: function (l) { return fNum(l[9]); } },
-        { titulo: "Margem R$", celula: function (l) { return fNum(l[10]); } }
+        { titulo: "Data", tipo: "data", valor: function (l) { return l[0]; } },
+        { titulo: "Nota", tipo: "inteiro", somar: false, valor: function (l) { return l[1]; } },
+        { titulo: "Pedido", tipo: "inteiro", somar: false, valor: function (l) { return l[2]; } },
+        { titulo: "RCA", tipo: "texto", valor: function (l) { return nomeRca(l[3]); } },
+        { titulo: "Cód produto", tipo: "inteiro", somar: false, valor: function (l) { return l[4]; } },
+        { titulo: "Produto", tipo: "texto", valor: function (l) { return l[5] || nomeProduto(l[4]); } },
+        { titulo: "Qtd", tipo: "inteiro", valor: function (l) { return l[6]; } },
+        { titulo: "Preço unit.", tipo: "moeda", somar: false, valor: function (l) { return l[7]; } },
+        { titulo: "Venda", tipo: "moeda", valor: function (l) { return l[8]; } },
+        { titulo: "Margem %", tipo: "percentual", valor: function (l) { return l[9]; } },
+        { titulo: "Margem R$", tipo: "moeda", valor: function (l) { return l[10]; } }
       ]
     }, res.linhas || []);
     botao.disabled = false;
@@ -1358,21 +1407,31 @@ function paginaPedidos(raiz) {
     tituloCsv: "Pedidos em aberto",
     filtrosExtras: function () { return [["Margem mínima", limite + "%"], ["Posição", E.posicoes ? Array.from(E.posicoes).join(", ") : "todas"]]; },
     colunas: [
-      { titulo: "Data", celula: function (p) { return fData(p[0]); }, fixa: 1 },
-      { titulo: "Cliente", celula: function (p) { return nomeCliente(p[2]); }, corta: true, destacar: true },
-      { titulo: "Pedido", num: true, celula: function (p) { return p[1]; }, destacar: true, fraco: true },
-      { titulo: "RCA", celula: function (p) { return nomeRca(p[3]); }, corta: true, destacar: true },
-      { titulo: "Supervisor", celula: function (p) { return nomeSupervisor(p[4]); }, fraco: true, corta: true },
-      { titulo: "Tipo", celula: function (p) { return p[5]; }, fraco: true },
-      { titulo: "Posição", celula: function (p) {
+      { titulo: "Data", tipo: "data", valor: function (p) { return p[0]; },
+        celula: function (p) { return fData(p[0]); }, fixa: 1 },
+      { titulo: "Cliente", tipo: "texto", valor: function (p) { return nomeCliente(p[2]); },
+        celula: function (p) { return nomeCliente(p[2]); }, corta: true, destacar: true },
+      { titulo: "Pedido", num: true, tipo: "inteiro", somar: false, valor: function (p) { return p[1]; },
+        celula: function (p) { return p[1]; }, destacar: true, fraco: true },
+      { titulo: "RCA", tipo: "texto", valor: function (p) { return nomeRca(p[3]); },
+        celula: function (p) { return nomeRca(p[3]); }, corta: true, destacar: true },
+      { titulo: "Supervisor", tipo: "texto", valor: function (p) { return nomeSupervisor(p[4]); },
+        celula: function (p) { return nomeSupervisor(p[4]); }, fraco: true, corta: true },
+      { titulo: "Tipo", tipo: "texto", valor: function (p) { return p[5]; },
+        celula: function (p) { return p[5]; }, fraco: true },
+      { titulo: "Posição", tipo: "texto", valor: function (p) { return p[6]; },
+        celula: function (p) {
           return el("span", "selo " + (p[6] === "LIBERADO" ? "bom" : p[6] === "BLOQUEADO" ? "grave" : "neutro"), p[6]);
-        }, csv: function (p) { return p[6]; } },
-      { titulo: "Valor", num: true, medida: true, celula: function (p) { return fR$(p[7]); }, csv: function (p) { return fNum(p[7]); } },
-      { titulo: "Qtd", num: true, celula: function (p) { return fNum(p[8], 0); }, fraco: true },
-      { titulo: "Margem", num: true, celula: function (p) {
+        } },
+      { titulo: "Valor", num: true, medida: true, tipo: "moeda", valor: function (p) { return p[7]; },
+        celula: function (p) { return fR$(p[7]); } },
+      { titulo: "Qtd", num: true, tipo: "inteiro", valor: function (p) { return p[8]; },
+        celula: function (p) { return fNum(p[8], 0); }, fraco: true },
+      { titulo: "Margem", num: true, tipo: "percentual", valor: function (p) { return p[9]; },
+        celula: function (p) {
           if (p[9] == null) return "—";
           return el("span", "selo " + (n(p[9]) < limite ? "grave" : "bom"), fPct(p[9], 2));
-        }, csv: function (p) { return p[9] == null ? "" : fNum(p[9]); } }
+        } }
     ],
     linhas: linhas,
     medida: function (p) { return n(p[7]); }, medidaCor: "viz-1",
@@ -1494,18 +1553,27 @@ function paginaDevolucoes(raiz) {
               ["Só responsabilidade do RCA", E.soMotivoRca ? "sim" : "não"]];
     },
     colunas: [
-      { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
-      { titulo: "Cliente", celula: function (l) { return nomeCliente(l[2]); }, corta: true, destacar: true },
-      { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, destacar: true, fraco: true },
-      { titulo: "RCA", celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
-      { titulo: "Motivo", celula: function (l) {
+      { titulo: "Data", tipo: "data", valor: function (l) { return l[0]; },
+        celula: function (l) { return fData(l[0]); }, fixa: 1 },
+      { titulo: "Cliente", tipo: "texto", valor: function (l) { return nomeCliente(l[2]); },
+        celula: function (l) { return nomeCliente(l[2]); }, corta: true, destacar: true },
+      { titulo: "Nota", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[1]; },
+        celula: function (l) { return l[1]; }, destacar: true, fraco: true },
+      { titulo: "RCA", tipo: "texto", valor: function (l) { return nomeRca(l[3]); },
+        celula: function (l) { return nomeRca(l[3]); }, corta: true, destacar: true },
+      { titulo: "Motivo", tipo: "texto", valor: function (l) { return motivoDe(l[4]); },
+        celula: function (l) {
           var m = MOTIVO_MAPA[l[4]];
           return el("span", "selo " + (m && m[1] ? "atencao" : "neutro"), m ? m[0] : "—");
-        }, csv: function (l) { return motivoDe(l[4]); } },
-      { titulo: "Filial", num: true, celula: function (l) { return l[5]; }, fraco: true },
-      { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[6], 0); }, fraco: true },
-      { titulo: "Valor devolvido", num: true, medida: true, celula: function (l) { return fR$(l[7]); }, csv: function (l) { return fNum(l[7]); } },
-      { titulo: "Total da nota", num: true, celula: function (l) { return fR$(l[8]); }, fraco: true, csv: function (l) { return fNum(l[8]); } }
+        } },
+      { titulo: "Filial", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[5]; },
+        celula: function (l) { return l[5]; }, fraco: true },
+      { titulo: "Qtd", num: true, tipo: "inteiro", valor: function (l) { return l[6]; },
+        celula: function (l) { return fNum(l[6], 0); }, fraco: true },
+      { titulo: "Valor devolvido", num: true, medida: true, tipo: "moeda", valor: function (l) { return l[7]; },
+        celula: function (l) { return fR$(l[7]); } },
+      { titulo: "Total da nota", num: true, tipo: "moeda", valor: function (l) { return l[8]; },
+        celula: function (l) { return fR$(l[8]); }, fraco: true }
     ],
     linhas: linhas,
     medida: function (l) { return n(l[7]); }, medidaCor: "viz-3",
@@ -1555,14 +1623,22 @@ function abrirDevolucoesDoRca(codusur) {
       id: "devol_rca_" + codusur,
       tituloCsv: "Devoluções — " + nomeRca(codusur),
       colunas: [
-        { titulo: "Data", celula: function (l) { return fData(l[0]); }, fixa: 1 },
-        { titulo: "Cliente", celula: function (l) { return nomeCliente(l[2]); }, corta: true },
-        { titulo: "Nota", num: true, celula: function (l) { return l[1]; }, fraco: true },
-        { titulo: "Motivo", celula: function (l) { return motivoDe(l[3]); }, corta: true },
-        { titulo: "Filial", num: true, celula: function (l) { return l[4]; }, fraco: true },
-        { titulo: "Qtd", num: true, celula: function (l) { return fNum(l[5], 0); }, fraco: true },
-        { titulo: "Valor devolvido", num: true, medida: true, celula: function (l) { return fR$(l[6]); }, csv: function (l) { return fNum(l[6]); } },
-        { titulo: "Total da nota", num: true, celula: function (l) { return fR$(l[7]); }, fraco: true }
+        { titulo: "Data", tipo: "data", valor: function (l) { return l[0]; },
+          celula: function (l) { return fData(l[0]); }, fixa: 1 },
+        { titulo: "Cliente", tipo: "texto", valor: function (l) { return nomeCliente(l[2]); },
+          celula: function (l) { return nomeCliente(l[2]); }, corta: true },
+        { titulo: "Nota", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[1]; },
+          celula: function (l) { return l[1]; }, fraco: true },
+        { titulo: "Motivo", tipo: "texto", valor: function (l) { return motivoDe(l[3]); },
+          celula: function (l) { return motivoDe(l[3]); }, corta: true },
+        { titulo: "Filial", num: true, tipo: "inteiro", somar: false, valor: function (l) { return l[4]; },
+          celula: function (l) { return l[4]; }, fraco: true },
+        { titulo: "Qtd", num: true, tipo: "inteiro", valor: function (l) { return l[5]; },
+          celula: function (l) { return fNum(l[5], 0); }, fraco: true },
+        { titulo: "Valor devolvido", num: true, medida: true, tipo: "moeda", valor: function (l) { return l[6]; },
+          celula: function (l) { return fR$(l[6]); } },
+        { titulo: "Total da nota", num: true, tipo: "moeda", valor: function (l) { return l[7]; },
+          celula: function (l) { return fR$(l[7]); }, fraco: true }
       ],
       linhas: res.linhas || [],
       medida: function (l) { return n(l[6]); }, medidaCor: "viz-3",
