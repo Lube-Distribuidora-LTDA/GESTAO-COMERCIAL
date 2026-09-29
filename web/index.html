@@ -248,16 +248,21 @@ button,input,select{font-family:inherit;font-weight:600;}
 }
 .heroi-card .sub{font-size:13px;color:var(--txt-2);margin-top:10px;font-weight:600;line-height:1.5;}
 .heroi-card .sub b{color:var(--ouro-forte);font-weight:800;}
-.heroi-lado{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:12px;}
+/* duas colunas fixas: com "auto-fit" o quarto cartão caía sozinho numa
+   segunda linha quando faltavam poucos pixels, e a linha ficava torta */
+.heroi-lado{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;align-items:stretch;}
 
 /* ---------- kpis ---------- */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;}
 .kpi{
   background:linear-gradient(160deg,rgba(19,34,66,.85),rgba(13,24,48,.62));
   border:1px solid var(--line-1);border-radius:var(--r);padding:15px 17px;
-  display:flex;flex-direction:column;gap:5px;position:relative;overflow:hidden;
+  position:relative;overflow:hidden;backdrop-filter:blur(8px);
+  /* três faixas de altura previsível: rótulo, número, legenda. Assim o número
+     de todo cartão nasce na mesma altura, tenha o rótulo uma linha ou duas —
+     senão cada cartão ancora o valor onde quer e a linha fica torta. */
+  display:grid;grid-template-rows:auto auto 1fr;gap:6px;
   transition:transform .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease);
-  backdrop-filter:blur(8px);
 }
 .kpi:hover{transform:translateY(-3px);border-color:var(--line-2);box-shadow:0 22px 50px -30px rgba(0,0,0,.9);}
 .kpi::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--txt-3);opacity:.45;}
@@ -267,10 +272,16 @@ button,input,select{font-family:inherit;font-weight:600;}
 .kpi.info::after{background:linear-gradient(90deg,var(--info),transparent 85%);}
 .kpi.ouro::after{background:linear-gradient(90deg,var(--ouro),transparent 85%);}
 .kpi.roxo::after{background:linear-gradient(90deg,var(--viz-3-luz),transparent 85%);}
-.kpi .lbl{font-size:10px;color:var(--txt-3);font-weight:800;letter-spacing:.13em;text-transform:uppercase;display:flex;align-items:center;gap:6px;line-height:1.35;}
-.kpi .val{font-family:"JetBrains Mono";font-size:26px;font-weight:800;letter-spacing:-.05em;line-height:1.1;white-space:nowrap;}
-.kpi.grande .val{font-size:19.5px;}
-.kpi .sub{font-size:11.5px;color:var(--txt-3);font-weight:600;line-height:1.45;}
+.kpi .lbl{
+  font-size:10px;color:var(--txt-3);font-weight:800;letter-spacing:.13em;text-transform:uppercase;
+  display:flex;align-items:flex-start;gap:6px;line-height:1.3;
+  min-height:26px;   /* cabe rótulo de duas linhas sem empurrar o número */
+}
+/* um tamanho só para todo número de KPI: é o que faz a linha de cartões ler
+   como uma linha, e não como quatro alturas diferentes */
+.kpi .val{font-family:"JetBrains Mono";font-size:23px;font-weight:800;letter-spacing:-.05em;
+  line-height:1.15;white-space:nowrap;align-self:start;}
+.kpi .sub{font-size:11.5px;color:var(--txt-3);font-weight:600;line-height:1.45;align-self:start;}
 .kpi.bom .val{color:var(--bom);} .kpi.grave .val{color:var(--grave);}
 .kpi.atencao .val{color:var(--atencao);} .kpi.info .val{color:var(--info);}
 .kpi.ouro .val{color:var(--ouro-forte);} .kpi.roxo .val{color:var(--viz-3-luz);}

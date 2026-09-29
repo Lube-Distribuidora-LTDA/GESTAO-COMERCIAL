@@ -234,7 +234,6 @@ function blocoKpis(defs, destino) {
   defs.forEach(function (d, i) {
     var k = el("div", "kpi sobe " + (d.tom || ""));
     k.style.animationDelay = Math.min(i * 45, 320) + "ms";
-    if (d.grande) k.classList.add("grande");
     var lbl = el("div", "lbl");
     lbl.appendChild(document.createTextNode(d.rotulo));
     if (d.ajuda) {
@@ -305,8 +304,18 @@ function chipsMultiplos(rotulo, opcoes, conjunto, aoMudar) {
     var b = el("button", "chip" + (ligado ? " on" : ""), o.rotulo);
     b.type = "button";
     b.addEventListener("click", function () {
-      var novo = new Set(conjunto == null ? opcoes.map(function (x) { return x.valor; }) : conjunto);
-      if (novo.has(o.valor)) novo.delete(o.valor); else novo.add(o.valor);
+      /* Estando em "Todas", clicar numa opção seleciona SÓ ela — que é o que
+         se espera ao clicar em "Filial 1". A versão anterior partia do
+         conjunto cheio e removia a clicada, acendendo as outras três e
+         deixando justamente a escolhida apagada. A partir daí, cada clique
+         acrescenta ou tira; esvaziar a seleção volta para "Todas". */
+      var novo;
+      if (conjunto == null) {
+        novo = new Set([o.valor]);
+      } else {
+        novo = new Set(conjunto);
+        if (novo.has(o.valor)) novo.delete(o.valor); else novo.add(o.valor);
+      }
       aoMudar(novo.size === 0 || novo.size === opcoes.length ? null : novo);
     });
     g.appendChild(b);
@@ -453,8 +462,8 @@ function linha(caixa, dados, opts) {
   if (!validos.length) { caixa.appendChild(el("div", "vazio", "Sem dados no período.")); return; }
   var larguraCol = opts.larguraCol || 48;
   var L = Math.max(640, dados.length * larguraCol + 110);
-  var A = opts.altura || 112;
-  var mE = 66, mD = 18, mT = 20, mB = 18;
+  var A = opts.altura || 185;
+  var mE = 66, mD = 18, mT = 26, mB = 24;
   var pw = L - mE - mD, ph = A - mT - mB;
   var svg = svgEl("svg", { viewBox: "0 0 " + L + " " + A, width: L, height: A, role: "img",
                            "aria-label": opts.aria || "Série de apoio" });
@@ -475,14 +484,26 @@ function linha(caixa, dados, opts) {
     t.textContent = opts.eixoFmt ? opts.eixoFmt(v) : fPct(v, 1);
     svg.appendChild(t);
   });
+  var yRef = null;
   if (opts.referencia != null && opts.referencia > base && opts.referencia < topo) {
-    var yr = py(opts.referencia);
-    svg.appendChild(svgEl("line", { x1: mE, y1: yr, x2: mE + pw, y2: yr,
-      stroke: "var(--atencao)", "stroke-width": 1, opacity: .55 }));
-    var tr = svgEl("text", { x: mE + pw, y: yr - 5, "text-anchor": "end", "font-size": 9.5, "font-weight": 800,
-                             fill: "var(--atencao)", "font-family": "JetBrains Mono, monospace" });
-    tr.textContent = opts.referenciaRotulo || "";
-    svg.appendChild(tr);
+    yRef = py(opts.referencia);
+    /* linha de limite: tracejada de propósito. Grade é sempre contínua; o
+       tracejado aqui significa "isto é um limite", não "isto é uma régua". */
+    svg.appendChild(svgEl("line", { x1: mE, y1: yRef, x2: mE + pw, y2: yRef,
+      stroke: "var(--atencao)", "stroke-width": 1.6, "stroke-dasharray": "7 5", opacity: .85 }));
+    /* o rótulo mora na ESQUERDA, em plaqueta, para nunca disputar espaço com
+       o valor do último ponto, que fica na direita */
+    var texto = opts.referenciaRotulo || "";
+    if (texto) {
+      var larg = texto.length * 5.6 + 16;
+      svg.appendChild(svgEl("rect", { x: mE + 8, y: yRef - 9, width: larg, height: 18, rx: 9,
+        fill: "var(--navy-900)", stroke: "var(--atencao)", "stroke-width": 1, opacity: .95 }));
+      var tr = svgEl("text", { x: mE + 8 + larg / 2, y: yRef + 4, "text-anchor": "middle",
+        "font-size": 10, "font-weight": 800, fill: "var(--atencao)",
+        "font-family": "JetBrains Mono, monospace" });
+      tr.textContent = texto;
+      svg.appendChild(tr);
+    }
   }
 
   var pts = [];
@@ -517,8 +538,13 @@ function linha(caixa, dados, opts) {
   pts.forEach(function (p, i) { if (p[2] > pts[iMax][2]) iMax = i; if (p[2] < pts[iMin][2]) iMin = i; });
   [pts.length - 1, iMax, iMin].filter(function (v, i, a) { return a.indexOf(v) === i; }).forEach(function (i) {
     var p = pts[i];
-    var t = svgEl("text", { x: Math.min(Math.max(p[0], mE + 16), mE + pw - 16), y: p[1] - 10,
-      "text-anchor": "middle", "font-size": 10, "font-weight": 800, fill: "var(--txt-1)",
+    /* acima do ponto, mas se a linha de limite estiver logo ali, passa para
+       baixo — rótulo nenhum escreve por cima de outra coisa */
+    var acima = true;
+    if (yRef != null && Math.abs((p[1] - 12) - yRef) < 14) acima = false;
+    var t = svgEl("text", { x: Math.min(Math.max(p[0], mE + 18), mE + pw - 18),
+      y: acima ? p[1] - 12 : p[1] + 19,
+      "text-anchor": "middle", "font-size": 11, "font-weight": 800, fill: "var(--txt-1)",
       "font-family": "JetBrains Mono, monospace" });
     t.textContent = opts.valorFmt ? opts.valorFmt(p[2]) : fPct(p[2], 1);
     svg.appendChild(t);
@@ -543,7 +569,8 @@ function serieTempo(destino, dados, opts) {
     destino.appendChild(baixo);
     linha(baixo, dados.map(function (d) { return { rotulo: d.rotulo, valor: d.linha }; }), {
       serie: opts.serieLinha, valorFmt: opts.linhaFmt, eixoFmt: opts.linhaFmt,
-      referencia: opts.referencia, referenciaRotulo: opts.referenciaRotulo, aria: opts.tituloLinha
+      referencia: opts.referencia, referenciaRotulo: opts.referenciaRotulo,
+      altura: opts.alturaLinha, aria: opts.tituloLinha
     });
   }
 }
@@ -912,15 +939,15 @@ function paginaComissao(raiz) {
          (variacao != null ? " No último mês fechado a comissão variou <b>" + fPct(variacao, 1) + "</b> contra o mês anterior." : ""),
     kpis: [
       { rotulo: "Total líquido", numero: empresa.totalLiquido, formatar: fCurto, titulo: fR$(empresa.totalLiquido),
-        tom: "info", grande: true, sub: "venda sem ST menos devolução",
+        tom: "info", sub: "venda sem ST menos devolução",
         ajuda: "É a base sobre a qual a comissão é paga: venda sem ST menos a devolução do período." },
       { rotulo: "Massa de margem", numero: empresa.massa, formatar: fCurto, titulo: fR$(empresa.massa),
-        tom: "bom", grande: true, sub: "total líquido menos CMV líquido" },
+        tom: "bom", sub: "total líquido menos CMV líquido" },
       { rotulo: "Margem líquida", numero: empresa.perc, formatar: function (v) { return fPct(v, 2); },
         tom: "roxo", sub: "do conjunto filtrado",
         ajuda: "A margem do total. Cada vendedor tem a margem dele, e é ela que define a faixa dele." },
       { rotulo: "ST no período", numero: empresa.st, formatar: fCurto, titulo: fR$(empresa.st),
-        tom: "atencao", grande: true, sub: "substituição tributária em " + fInt(itens.length) + " vendedores" }
+        tom: "atencao", sub: "substituição tributária em " + fInt(itens.length) + " vendedores" }
     ]
   }));
 
@@ -1140,7 +1167,7 @@ function paginaMargem(raiz) {
          "uma margem média de <b>" + fPct(margemMedia, 2) + "</b>. " +
          "<b>" + fInt(abaixo) + "</b> itens saíram abaixo de " + limite + "%.",
     kpis: [
-      { rotulo: "Venda no período", numero: n(r.venda), formatar: fCurto, titulo: fR$(r.venda), tom: "info", grande: true,
+      { rotulo: "Venda no período", numero: n(r.venda), formatar: fCurto, titulo: fR$(r.venda), tom: "info",
         sub: fInt(r.itens) + " itens faturados" },
       { rotulo: "Margem média", numero: margemMedia, formatar: function (v) { return fPct(v, 2); }, tom: "bom",
         sub: "no conjunto do período" },
@@ -1304,10 +1331,10 @@ function paginaPedidos(raiz) {
         sub: "não faturados nem cancelados" },
       { rotulo: "Abaixo de " + limite + "%", numero: fora.length, formatar: fInt, tom: "grave",
         sub: linhas.length ? fPct(fora.length / linhas.length * 100, 1) + " dos pedidos" : "—" },
-      { rotulo: "Valor fora da margem", numero: valorFora, formatar: fCurto, titulo: fR$(valorFora), tom: "grave", grande: true,
+      { rotulo: "Valor fora da margem", numero: valorFora, formatar: fCurto, titulo: fR$(valorFora), tom: "grave",
         sub: "para revisar antes do faturamento" },
       { rotulo: "Ticket médio", numero: linhas.length ? totalValor / linhas.length : 0, formatar: fCurto,
-        tom: "atencao", grande: true, sub: "por pedido em aberto" }
+        tom: "atencao", sub: "por pedido em aberto" }
     ]
   }));
 
@@ -1397,15 +1424,15 @@ function paginaDevolucoes(raiz) {
          fPct(valorTotal ? valorRca / valorTotal * 100 : 0, 1) + ") por motivos comerciais, " +
          "que são os atribuíveis ao vendedor.",
     kpis: [
-      { rotulo: "Responsabilidade do RCA", numero: valorRca, formatar: fCurto, titulo: fR$(valorRca), tom: "atencao", grande: true,
+      { rotulo: "Responsabilidade do RCA", numero: valorRca, formatar: fCurto, titulo: fR$(valorRca), tom: "atencao",
         sub: valorTotal ? fPct(valorRca / valorTotal * 100, 1) + " do total" : "—",
         ajuda: "Motivos comerciais: não pediu, preço errado, pedido repetido, sem dinheiro… Erro de carregamento, atraso e produto danificado ficam de fora." },
-      { rotulo: "No filtro atual", numero: valorFiltrado, formatar: fCurto, titulo: fR$(valorFiltrado), tom: "info", grande: true,
+      { rotulo: "No filtro atual", numero: valorFiltrado, formatar: fCurto, titulo: fR$(valorFiltrado), tom: "info",
         sub: fInt(linhas.length) + " linhas",
         ajuda: "Este cartão segue exatamente os mesmos filtros da tabela abaixo." },
       { rotulo: "Notas de entrada", numero: n(t.notas), formatar: fInt, tom: "roxo", sub: "no período" },
       { rotulo: "Valor médio por nota", numero: n(t.notas) ? valorTotal / n(t.notas) : 0, formatar: fCurto,
-        grande: true, sub: "devolvido por nota" }
+        sub: "devolvido por nota" }
     ]
   }));
 
