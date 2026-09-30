@@ -146,6 +146,22 @@ def executar_pedido(conn_ora, conn_pg, pedido) -> tuple[int, str]:
                 "INSERT INTO comercial.margem_alteracao "
                 "(solicitacao_id, codfilial, codprod, valor_anterior, valor_novo) VALUES %s",
                 anteriores, page_size=1000)
+
+            # A foto de PCPRODFILIAL e recarregada pelo ETL de hora em hora. Se
+            # ela so mudasse ali, um produto aberto agora continuaria parecendo
+            # FECHADO — e portanto sem dono — ate a proxima carga, e nesse
+            # intervalo qualquer um poderia fechar o que outra pessoa abriu.
+            # A regra "quem abriu e quem fecha" so vale de verdade se a foto
+            # acompanhar na hora. Por isso as linhas que acabaram de mudar sao
+            # corrigidas aqui; a carga seguinte confirma tudo contra o WinThor.
+            psycopg2.extras.execute_values(
+                cpg,
+                "UPDATE comercial.fato_margem_filial f "
+                "   SET percmargemmin = v.valor, data_carga = now() "
+                "  FROM (VALUES %s) AS v(codfilial, codprod, valor) "
+                " WHERE f.codfilial = v.codfilial AND f.codprod = v.codprod",
+                [(a[1], a[2], a[4]) for a in anteriores],
+                template="(%s::smallint, %s::integer, %s::numeric)", page_size=1000)
         conn_pg.commit()
 
     encontrados = len({a[2] for a in anteriores})

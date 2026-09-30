@@ -41,18 +41,25 @@ do banco; o navegador só escolhe a faixa.
 Dimensão carrega por **upsert**, nunca `TRUNCATE`: um RCA que não vendeu nesta
 rodada não pode sumir do cadastro e deixar as devoluções dele sem nome.
 
-## A fila da margem
+## A abertura de margem
 
-| Tabela | O que guarda |
+| Objeto | O que guarda / faz |
 |---|---|
-| `comercial.margem_solicitacao` | o pedido: quem, quando, por quê, ação, filiais, produtos e o que aconteceu |
+| `comercial.fato_margem_filial` | a foto de `PCPRODFILIAL.PERCMARGEMMIN` das 4 filiais — e daqui que sai "o que esta aberto agora" |
+| `comercial.margem_solicitacao` | o pedido: quem, quando, por que, acao, filiais, produtos e o que aconteceu |
 | `comercial.margem_alteracao` | o valor **anterior** de cada produto, gravado antes de mudar |
+| `comercial.margem_estado` | view: produtos abertos agora e de quem e a responsabilidade |
+| `comercial.margem_bloqueios(...)` | o que este solicitante **nao** pode fechar, e de quem e |
+| `comercial.margem_registrar(...)` | valida, aplica a regra de quem fecha, e registra |
+| `comercial.margem_painel(dias)` | os numeros do painel de uso |
+| `comercial.margem_abertos(n)` | a lista do que esta aberto, com dono e motivo |
 
-`margem_registrar(...)` valida e enfileira — toda regra mora no banco, não na
-tela: tela é conveniência. `margem_historico(n)` alimenta o painel.
+**Toda regra mora aqui, nao na tela** — tela e conveniencia. Inclusive a de quem
+fecha: `margem_registrar` recusa um `fechar` cujo produto foi aberto por outra
+pessoa, e devolve a lista de quem sao.
 
-Quem executa é o `etl/agente_margem.py`, que roda dentro da rede: o Oracle do
-WinThor não é alcançável da Vercel. É o mesmo motivo de a fila existir.
+Quem executa e o `etl/servidor_margem.py`, que roda dentro da rede: o Oracle do
+WinThor nao e alcancavel da Vercel. O painel da Vercel so le.
 
 ## Views materializadas
 

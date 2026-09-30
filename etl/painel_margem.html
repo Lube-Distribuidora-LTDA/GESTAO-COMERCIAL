@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<!--
+  painel_margem.html — a tela do sistema de abertura de margem.
+
+  Servida pelo servidor_margem.py, que roda numa maquina da rede. Nao abra este
+  arquivo direto do disco: sozinho ele nao alcanca o banco nem o WinThor.
+
+  A REGRA MORA NO BANCO, nao aqui. Esta tela mostra cedo quem e dono de que,
+  para ninguem montar um pedido de 200 codigos e levar um "nao" no final — mas
+  quem recusa e o comercial.margem_registrar.
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Abertura de margem · Lube</title>
+<style>
+:root{
+  --navy-900:#050b1c; --navy-850:#08122b; --surface-1:#0d1830; --surface-2:#132242; --surface-3:#1a2c52;
+  --line-1:#1e3059; --line-2:#2a4275; --line-luz:rgba(255,255,255,.07);
+  --txt-1:#f4f7ff; --txt-2:#aec0e2; --txt-3:#7c92be;
+  --brand-blue:#2a41c8; --brand-blue-lt:#6b88ff; --brand-red:#e5202c;
+  --ouro:#e9c877; --ouro-forte:#f5dea0; --ouro-dim:rgba(233,200,119,.13); --ouro-linha:rgba(233,200,119,.42);
+  /* Cores de dado: as mesmas do painel comercial, validadas contra esta
+     superficie nos seis testes do guia. Nao trocar sem revalidar. */
+  --viz-1:#5f7ef5; --viz-2:#b8892a; --viz-3:#8a6ce8; --viz-4:#1a9468;
+  --viz-1-luz:#8aa1f8; --viz-2-luz:#d3a344;
+  --bom:#34e89e; --bom-dim:rgba(52,232,158,.14); --bom-linha:rgba(52,232,158,.45);
+  --atencao:#ffb340; --atencao-dim:rgba(255,179,64,.15); --atencao-linha:rgba(255,179,64,.48);
+  --grave:#ff6b74; --grave-dim:rgba(229,32,44,.18); --grave-linha:rgba(255,107,116,.5);
+  --info:#5fb2ff; --info-dim:rgba(95,178,255,.15); --info-linha:rgba(95,178,255,.48);
+  --grade:rgba(255,255,255,.07);
+  --r:16px; --sombra:0 30px 80px -38px rgba(0,0,0,.95);
+  --ease:cubic-bezier(.22,.8,.3,1); --mola:cubic-bezier(.34,1.56,.64,1);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(1100px 620px at 82% -12%, rgba(42,65,200,.24), transparent 62%),
+    radial-gradient(760px 520px at 8% 108%, rgba(233,200,119,.08), transparent 60%),
+    var(--navy-900);
+  color:var(--txt-1);
+  font:15px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.015em}
+a{color:var(--brand-blue-lt)}
+
+/* ------------------------------------------------------------- estrutura */
+.topo{
+  position:sticky;top:0;z-index:40;
+  background:linear-gradient(180deg,rgba(5,11,28,.96),rgba(5,11,28,.82));
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line-1);
+  padding:14px 26px;
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+}
+.marca{display:flex;align-items:center;gap:13px;margin-right:auto}
+.selo{
+  width:40px;height:40px;border-radius:12px;display:grid;place-items:center;
+  background:linear-gradient(145deg,var(--brand-blue),#182a8f);
+  box-shadow:0 0 0 1px var(--ouro-linha),0 14px 34px -16px rgba(42,65,200,.9);
+  font-weight:800;font-size:17px;color:var(--ouro-forte);
+}
+.marca h1{font-size:17px}
+.marca p{margin:2px 0 0;font-size:11.5px;color:var(--txt-3);letter-spacing:.09em;text-transform:uppercase}
+.abas{display:flex;gap:6px;background:var(--surface-1);padding:5px;border-radius:13px;border:1px solid var(--line-1)}
+.aba{
+  border:0;background:none;color:var(--txt-2);font:600 13px/1 "Segoe UI",sans-serif;
+  padding:9px 15px;border-radius:9px;cursor:pointer;transition:all .22s var(--ease);
+}
+.aba:hover{color:var(--txt-1);background:var(--surface-2)}
+.aba[aria-selected="true"]{background:linear-gradient(145deg,var(--brand-blue),#1a2d9e);color:#fff;box-shadow:0 8px 22px -12px rgba(42,65,200,.9)}
+main{padding:24px 26px 70px;max-width:1440px;margin:0 auto}
+.pagina{display:none;animation:sobe .4s var(--ease) both}
+.pagina.ativa{display:block}
+@keyframes sobe{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+.cartao{
+  background:linear-gradient(160deg,var(--surface-1),rgba(19,34,66,.72));
+  border:1px solid var(--line-1);border-radius:var(--r);box-shadow:var(--sombra);
+  padding:20px 22px;margin-bottom:18px;
+}
+.cartao > h2{font-size:15px;margin-bottom:3px}
+.cartao > h2 + p{margin:0 0 16px;font-size:12.5px;color:var(--txt-3)}
+.grade{display:grid;gap:18px}
+@media(min-width:1000px){.duas{grid-template-columns:1.15fr .85fr}}
+
+/* ------------------------------------------------------- estado das filiais */
+.filiais{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+.filial{
+  position:relative;overflow:hidden;
+  background:linear-gradient(155deg,var(--surface-2),var(--surface-1));
+  border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;
+  transition:transform .3s var(--mola),box-shadow .3s var(--ease);
+}
+.filial:hover{transform:translateY(-3px);box-shadow:0 22px 48px -26px rgba(0,0,0,.95)}
+.filial::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--txt-3)}
+.filial.aberta::before{background:var(--atencao)}
+.filial.fechada::before{background:var(--bom)}
+.filial .nome{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-3)}
+.filial .marca-estado{
+  display:inline-flex;align-items:center;gap:7px;margin-top:9px;
+  font-weight:700;font-size:13.5px;padding:5px 11px;border-radius:999px;
+}
+.filial.aberta .marca-estado{background:var(--atencao-dim);border:1px solid var(--atencao-linha);color:var(--atencao)}
+.filial.fechada .marca-estado{background:var(--bom-dim);border:1px solid var(--bom-linha);color:var(--bom)}
+.ponto{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px rgba(255,255,255,.07)}
+.filial.aberta .ponto{animation:pulsa 2s var(--ease) infinite}
+@keyframes pulsa{0%,100%{box-shadow:0 0 0 3px rgba(255,179,64,.22)}50%{box-shadow:0 0 0 8px rgba(255,179,64,0)}}
+.filial .qtd{margin-top:12px;font-size:27px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.filial .qtd small{font-size:12px;font-weight:600;color:var(--txt-3);letter-spacing:0}
+.filial .pe{margin-top:6px;font-size:11.5px;color:var(--txt-3);min-height:16px}
+
+/* -------------------------------------------------------------- formulario */
+.campo{margin-bottom:15px}
+.campo > label{display:block;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--txt-2);margin-bottom:7px}
+.campo .ajuda{font-size:11.5px;color:var(--txt-3);font-weight:400;letter-spacing:0;text-transform:none;margin-left:7px}
+input[type=text],input[type=number],select,textarea{
+  width:100%;background:var(--navy-850);border:1px solid var(--line-2);border-radius:11px;
+  color:var(--txt-1);font:14px/1.45 "Segoe UI",sans-serif;padding:11px 13px;transition:border-color .2s,box-shadow .2s;
+}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--ouro-linha);box-shadow:0 0 0 3px var(--ouro-dim)}
+textarea{resize:vertical;min-height:84px}
+textarea.codigos{font-family:"Cascadia Mono",Consolas,monospace;font-size:13px;min-height:130px}
+.escolhas{display:flex;gap:8px;flex-wrap:wrap}
+.escolha{
+  border:1px solid var(--line-2);background:var(--surface-1);color:var(--txt-2);
+  padding:9px 16px;border-radius:999px;cursor:pointer;font:600 13px/1 "Segoe UI",sans-serif;
+  transition:all .2s var(--ease);
+}
+.escolha:hover{border-color:var(--line-2);color:var(--txt-1);transform:translateY(-1px)}
+.escolha[aria-pressed="true"]{background:linear-gradient(145deg,var(--brand-blue),#1a2d9e);border-color:var(--brand-blue-lt);color:#fff}
+.escolha.perigo[aria-pressed="true"]{background:linear-gradient(145deg,#b8892a,#8a6317);border-color:var(--viz-2-luz)}
+.btn{
+  border:0;border-radius:12px;padding:12px 22px;cursor:pointer;
+  font:700 14px/1 "Segoe UI",sans-serif;transition:transform .2s var(--mola),box-shadow .25s var(--ease),opacity .2s;
+}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none!important}
+.btn:not(:disabled):hover{transform:translateY(-2px)}
+.btn.principal{background:linear-gradient(145deg,var(--ouro),#c79c37);color:#2a1d02;box-shadow:0 16px 40px -20px rgba(233,200,119,.85)}
+.btn.neutro{background:var(--surface-3);color:var(--txt-1);border:1px solid var(--line-2)}
+.acoes{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
+
+/* ---------------------------------------------------------------- avisos */
+.aviso{border-radius:12px;padding:13px 15px;font-size:13.5px;line-height:1.55;margin-bottom:14px;border:1px solid}
+.aviso.erro{background:var(--grave-dim);border-color:var(--grave-linha);color:#ffd2d5}
+.aviso.ok{background:var(--bom-dim);border-color:var(--bom-linha);color:#c6ffe6}
+.aviso.atencao{background:var(--atencao-dim);border-color:var(--atencao-linha);color:#ffe4bd}
+.aviso.info{background:var(--info-dim);border-color:var(--info-linha);color:#cfe8ff}
+.aviso b{color:#fff}
+.aviso ul{margin:8px 0 0;padding-left:20px}
+
+/* --------------------------------------------------------------- tabelas */
+.rolagem{overflow:auto;max-height:440px;border:1px solid var(--line-1);border-radius:12px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+th{
+  position:sticky;top:0;z-index:2;background:var(--surface-2);
+  text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-3);
+  padding:10px 12px;border-bottom:1px solid var(--line-2);white-space:nowrap;
+}
+td{padding:9px 12px;border-bottom:1px solid var(--line-luz);color:var(--txt-2)}
+tbody tr:hover td{background:rgba(255,255,255,.035)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.selo-txt{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid}
+.selo-txt.aberto{background:var(--atencao-dim);border-color:var(--atencao-linha);color:var(--atencao)}
+.selo-txt.fechado{background:var(--bom-dim);border-color:var(--bom-linha);color:var(--bom)}
+.selo-txt.bloqueado{background:var(--grave-dim);border-color:var(--grave-linha);color:var(--grave)}
+.selo-txt.sem-dono{background:rgba(255,255,255,.07);border-color:var(--line-2);color:var(--txt-3)}
+.selo-txt.concluida{background:var(--bom-dim);border-color:var(--bom-linha);color:var(--bom)}
+.selo-txt.erro{background:var(--grave-dim);border-color:var(--grave-linha);color:var(--grave)}
+.selo-txt.pendente,.selo-txt.executando{background:var(--info-dim);border-color:var(--info-linha);color:var(--info)}
+
+/* ------------------------------------------------------------------ kpis */
+.kpis{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.kpi{
+  background:linear-gradient(155deg,var(--surface-2),var(--surface-1));
+  border:1px solid var(--line-1);border-radius:14px;padding:15px 17px;
+  display:grid;grid-template-rows:auto 1fr auto;gap:5px;
+}
+.kpi .rotulo{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--txt-3);min-height:26px}
+.kpi .valor{font-size:29px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.05}
+.kpi .valor.ouro{background:linear-gradient(120deg,var(--ouro-forte),var(--ouro));-webkit-background-clip:text;background-clip:text;color:transparent}
+.kpi .nota{font-size:11.5px;color:var(--txt-3);min-height:16px}
+
+.legenda{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--txt-2);margin-bottom:12px}
+.legenda span{display:inline-flex;align-items:center;gap:7px}
+.legenda i{width:11px;height:11px;border-radius:3px;display:inline-block}
+.grafico{width:100%;height:auto;display:block;overflow:visible}
+.barras{display:grid;gap:9px}
+.barra-linha{display:grid;grid-template-columns:150px 1fr 60px;gap:12px;align-items:center;font-size:13px}
+.barra-linha .quem{color:var(--txt-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.barra-trilho{background:rgba(255,255,255,.055);border-radius:5px;height:18px;overflow:hidden}
+.barra-cheia{height:100%;border-radius:5px;transform-origin:left;animation:cresce .75s var(--ease) both}
+@keyframes cresce{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.barra-linha .n{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:var(--txt-1)}
+
+.vazio{padding:28px;text-align:center;color:var(--txt-3);font-size:13.5px}
+.rodape{margin-top:28px;padding-top:16px;border-top:1px solid var(--line-1);font-size:11.5px;color:var(--txt-3);display:flex;gap:18px;flex-wrap:wrap}
+.carregando{display:inline-block;width:14px;height:14px;border:2px solid var(--line-2);border-top-color:var(--ouro);border-radius:50%;animation:gira .7s linear infinite;vertical-align:-2px}
+@keyframes gira{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="marca">
+    <div class="selo">L</div>
+    <div>
+      <h1>Abertura de margem</h1>
+      <p>Lube Distribuidora · piso de margem por filial</p>
+    </div>
+  </div>
+  <div class="abas" role="tablist">
+    <button class="aba" role="tab" aria-selected="true"  data-pg="operar">Abrir e fechar</button>
+    <button class="aba" role="tab" aria-selected="false" data-pg="abertos">O que está aberto</button>
+    <button class="aba" role="tab" aria-selected="false" data-pg="painel">Painel de uso</button>
+    <button class="aba" role="tab" aria-selected="false" data-pg="historico">Histórico</button>
+  </div>
+</header>
+
+<main>
+  <div id="falha"></div>
+
+  <!-- estado, sempre visível -->
+  <section class="cartao">
+    <h2>Como está agora</h2>
+    <p id="carimbo">Carregando…</p>
+    <div class="filiais" id="filiais"></div>
+  </section>
+
+  <!-- ============================================================ OPERAR -->
+  <section class="pagina ativa" id="pg-operar">
+    <div class="grade duas">
+      <div class="cartao">
+        <h2>Fazer um pedido</h2>
+        <p>Nome, motivo e produtos são obrigatórios — é o que fica registrado.</p>
+        <div id="recado"></div>
+
+        <div class="campo">
+          <label for="quem">Quem está pedindo</label>
+          <div id="caixa-quem"></div>
+        </div>
+
+        <div class="campo">
+          <label>O que fazer</label>
+          <div class="escolhas" id="acao">
+            <button class="escolha perigo" data-v="abrir"  aria-pressed="true">Abrir a margem</button>
+            <button class="escolha"        data-v="fechar" aria-pressed="false">Fechar a margem</button>
+          </div>
+          <p class="ajuda" id="explica-acao" style="margin:9px 0 0"></p>
+        </div>
+
+        <div class="campo" id="campo-piso" hidden>
+          <label for="piso">Piso a aplicar <span class="ajuda">o padrão da casa é 5%</span></label>
+          <input type="number" id="piso" value="5" min="0" max="100" step="0.01">
+        </div>
+
+        <div class="campo">
+          <label>Filiais</label>
+          <div class="escolhas" id="filiais-escolha"></div>
+        </div>
+
+        <div class="campo">
+          <label for="produtos">Códigos de produto <span class="ajuda">um por linha, ou separados por vírgula/espaço · até 500</span></label>
+          <textarea id="produtos" class="codigos" placeholder="1234&#10;5678&#10;9012"></textarea>
+          <p class="ajuda" id="conta-produtos" style="margin:7px 0 0">nenhum código ainda</p>
+        </div>
+
+        <div class="campo">
+          <label for="motivo">Por que <span class="ajuda">mínimo 10 letras · quem ler daqui a seis meses precisa entender</span></label>
+          <textarea id="motivo" placeholder="Ex.: campanha de outubro do fornecedor X, autorizada pelo Marcelo"></textarea>
+        </div>
+
+        <div class="acoes">
+          <button class="btn neutro" id="btn-conferir">Conferir antes</button>
+          <button class="btn principal" id="btn-executar" disabled>Executar no WinThor</button>
+        </div>
+      </div>
+
+      <div class="cartao">
+        <h2>Conferência</h2>
+        <p>O que vai acontecer com cada produto, antes de acontecer.</p>
+        <div id="conferencia"><div class="vazio">Preencha ao lado e clique em <b>Conferir antes</b>.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== ABERTOS -->
+  <section class="pagina" id="pg-abertos">
+    <div class="cartao">
+      <h2>Produtos com a margem aberta</h2>
+      <p>Direto do WinThor. Se alguém mexer por fora do sistema, aparece aqui do mesmo jeito.</p>
+      <div class="campo" style="max-width:360px">
+        <label for="busca">Procurar</label>
+        <input type="text" id="busca" placeholder="código, descrição ou nome de quem abriu">
+      </div>
+      <div class="rolagem"><table id="tb-abertos"><thead><tr>
+        <th>Filial</th><th class="num">Código</th><th>Produto</th><th>Quem abriu</th><th>Desde</th><th>Motivo</th>
+      </tr></thead><tbody></tbody></table></div>
+      <p class="ajuda" id="conta-abertos" style="margin:10px 0 0"></p>
+    </div>
+  </section>
+
+  <!-- ============================================================ PAINEL -->
+  <section class="pagina" id="pg-painel">
+    <div class="cartao">
+      <h2>Painel de uso</h2>
+      <p id="periodo-painel">Últimos 90 dias.</p>
+      <div class="kpis" id="kpis"></div>
+    </div>
+    <div class="grade duas">
+      <div class="cartao">
+        <h2>Aberturas e fechamentos por dia</h2>
+        <p>Cada ponto é um pedido concluído.</p>
+        <div class="legenda">
+          <span><i style="background:var(--viz-1)"></i>Aberturas</span>
+          <span><i style="background:var(--viz-2)"></i>Fechamentos</span>
+        </div>
+        <div id="serie"></div>
+      </div>
+      <div class="cartao">
+        <h2>Quem tem produto aberto agora</h2>
+        <p>Só essas pessoas podem fechar o que abriram.</p>
+        <div id="responsaveis"></div>
+      </div>
+    </div>
+    <div class="grade duas">
+      <div class="cartao">
+        <h2>Quem mais abriu no período</h2>
+        <p>Pedidos concluídos, não produtos.</p>
+        <div id="por-pessoa"></div>
+      </div>
+      <div class="cartao">
+        <h2>Filiais que mais abriram</h2>
+        <p>Um pedido em três filiais conta uma vez em cada.</p>
+        <div id="por-filial"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================= HISTORICO -->
+  <section class="pagina" id="pg-historico">
+    <div class="cartao">
+      <h2>Histórico de pedidos</h2>
+      <p>Os 60 últimos, com o motivo escrito por quem pediu.</p>
+      <div class="rolagem"><table id="tb-historico"><thead><tr>
+        <th class="num">#</th><th>Quando</th><th>Quem</th><th>Ação</th><th>Filiais</th>
+        <th class="num">Produtos</th><th>Situação</th><th>Motivo</th><th>Resultado</th>
+      </tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <div class="rodape">
+    <span id="rodape-maquina"></span>
+    <span>A regra de quem fecha é aplicada pelo banco, não por esta tela.</span>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+/* ======================================================================
+   Estado da tela
+   ====================================================================== */
+const FILIAIS = [1, 7, 11, 12];
+let DADOS = null;                  // ultima resposta de /api/estado
+let SELECAO = new Set([1]);        // filiais escolhidas no formulario
+let ACAO = "abrir";
+let CONFERIDO = null;              // resultado de /api/conferir
+
+const $ = (s, raiz) => (raiz || document).querySelector(s);
+const $$ = (s, raiz) => Array.from((raiz || document).querySelectorAll(s));
+const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = (n) => (n == null ? "—" : Number(n).toLocaleString("pt-BR"));
+
+function quando(iso, comHora) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const dia = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return comHora ? dia + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : dia;
+}
+
+/* Ha quanto tempo, em palavras — "aberto ha 3 meses" diz mais que uma data. */
+function faz(iso) {
+  if (!iso) return "";
+  const dias = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (dias <= 0) return "hoje";
+  if (dias === 1) return "há 1 dia";
+  if (dias < 30) return "há " + dias + " dias";
+  const meses = Math.round(dias / 30);
+  return meses === 1 ? "há 1 mês" : "há " + meses + " meses";
+}
+
+function avisar(onde, tipo, html) {
+  $(onde).innerHTML = html ? '<div class="aviso ' + tipo + '">' + html + "</div>" : "";
+}
+
+async function chamar(caminho, corpo) {
+  const cfg = corpo
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) }
+    : {};
+  const r = await fetch(caminho, cfg);
+  let dados = {};
+  try { dados = await r.json(); } catch (e) { /* resposta sem json */ }
+  if (!r.ok) {
+    const e = new Error(dados.erro || "Falha na comunicação com o servidor (HTTP " + r.status + ").");
+    e.dados = dados;
+    throw e;
+  }
+  return dados;
+}
+
+/* ======================================================================
+   Abas
+   ====================================================================== */
+$$(".aba").forEach((b) => b.addEventListener("click", () => {
+  $$(".aba").forEach((o) => o.setAttribute("aria-selected", String(o === b)));
+  $$(".pagina").forEach((p) => p.classList.toggle("ativa", p.id === "pg-" + b.dataset.pg));
+}));
+
+/* ======================================================================
+   Carregar o estado
+   ====================================================================== */
+async function carregar() {
+  try {
+    DADOS = await chamar("/api/estado?dias=90");
+    avisar("#falha", "erro", "");
+    desenharFiliais();
+    desenharAbertos();
+    desenharPainel();
+    desenharHistorico();
+    montarQuem();
+    $("#carimbo").textContent =
+      "Leitura do WinThor de " + quando(DADOS.painel.carga, true) +
+      " · a foto é atualizada a cada carga do BI.";
+    $("#rodape-maquina").textContent = "Servidor: " + DADOS.maquina;
+  } catch (e) {
+    avisar("#falha", "erro", "<b>Não consegui falar com o servidor.</b> " + esc(e.message) +
+      "<br>Confira se o <code>servidor_margem.py</code> continua rodando na máquina do BI.");
+  }
+}
+
+/* ---------------------------------------------------------------- filiais */
+function desenharFiliais() {
+  const porFilial = new Map((DADOS.painel.abertos_por_filial || []).map((l) => [l[0], l]));
+  $("#filiais").innerHTML = FILIAIS.map((f) => {
+    const l = porFilial.get(f);
+    const abertos = l ? l[1] : 0;
+    const semDono = l ? l[2] : 0;
+    const aberta = abertos > 0;
+    return '<article class="filial ' + (aberta ? "aberta" : "fechada") + '">' +
+      '<div class="nome">Filial ' + f + "</div>" +
+      '<div class="marca-estado"><span class="ponto"></span>' +
+        (aberta ? "Aberta" : "Fechada") + "</div>" +
+      '<div class="qtd">' + num(abertos) + " <small>produto" + (abertos === 1 ? "" : "s") + " sem piso</small></div>" +
+      '<div class="pe">' + (semDono ? num(semDono) + " sem dono registrado" : (aberta ? "todos com responsável" : "nada aberto")) + "</div>" +
+      "</article>";
+  }).join("");
+}
+
+/* ------------------------------------------------------------- quem pediu */
+function montarQuem() {
+  const pessoas = DADOS.pessoas || [];
+  const lembrado = localStorage.getItem("margem.quem") || "";
+  if (pessoas.length) {
+    $("#caixa-quem").innerHTML = '<select id="quem"><option value="">— escolha —</option>' +
+      pessoas.map((p) => '<option' + (p === lembrado ? " selected" : "") + ">" + esc(p) + "</option>").join("") +
+      "</select>";
+  } else {
+    $("#caixa-quem").innerHTML = '<input type="text" id="quem" maxlength="60" placeholder="Nome completo" value="' +
+      esc(lembrado) + '">';
+  }
+  $("#quem").addEventListener("change", () => {
+    localStorage.setItem("margem.quem", $("#quem").value);
+    CONFERIDO = null; $("#btn-executar").disabled = true;
+  });
+}
+
+/* ======================================================================
+   Formulario
+   ====================================================================== */
+$("#filiais-escolha").innerHTML = FILIAIS.map((f) =>
+  '<button class="escolha" data-f="' + f + '" aria-pressed="' + (f === 1) + '">Filial ' + f + "</button>").join("");
+
+$("#filiais-escolha").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".escolha");
+  if (!b) return;
+  const f = Number(b.dataset.f);
+  if (SELECAO.has(f)) SELECAO.delete(f); else SELECAO.add(f);
+  if (!SELECAO.size) SELECAO.add(f);                 // nunca fica sem nenhuma
+  $$(".escolha", $("#filiais-escolha")).forEach((o) =>
+    o.setAttribute("aria-pressed", String(SELECAO.has(Number(o.dataset.f)))));
+  invalidar();
+});
+
+$("#acao").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".escolha");
+  if (!b) return;
+  ACAO = b.dataset.v;
+  $$(".escolha", $("#acao")).forEach((o) => o.setAttribute("aria-pressed", String(o === b)));
+  $("#campo-piso").hidden = ACAO !== "fechar";
+  explicarAcao();
+  invalidar();
+});
+
+function explicarAcao() {
+  $("#explica-acao").innerHTML = ACAO === "abrir"
+    ? "Tira o piso de margem: o produto passa a poder ser vendido abaixo da margem nessas filiais."
+    : "Devolve o piso de margem. <b>Você só consegue fechar o que você mesmo abriu</b> — e o que estava aberto antes deste sistema, que não tem dono.";
+}
+explicarAcao();
+
+function lerProdutos() {
+  return Array.from(new Set(
+    ($("#produtos").value.match(/\d+/g) || []).map(Number).filter((n) => n > 0)));
+}
+
+function invalidar() {
+  CONFERIDO = null;
+  $("#btn-executar").disabled = true;
+  const n = lerProdutos().length;
+  $("#conta-produtos").textContent =
+    n === 0 ? "nenhum código ainda" : n + (n === 1 ? " código" : " códigos") + (n > 500 ? " — o teto é 500" : "");
+}
+$("#produtos").addEventListener("input", invalidar);
+$("#motivo").addEventListener("input", invalidar);
+$("#piso").addEventListener("input", invalidar);
+invalidar();
+
+/* ------------------------------------------------------------- conferir */
+function validarFormulario() {
+  const quem = ($("#quem") && $("#quem").value || "").trim();
+  const motivo = $("#motivo").value.trim();
+  const produtos = lerProdutos();
+  if (quem.length < 3) return "Diga quem está pedindo.";
+  if (!produtos.length) return "Informe pelo menos um código de produto.";
+  if (produtos.length > 500) return "São no máximo 500 produtos por pedido.";
+  if (motivo.length < 10) return "Escreva o motivo com pelo menos 10 letras.";
+  if (ACAO === "fechar") {
+    const p = Number($("#piso").value);
+    if (!(p >= 0 && p <= 100)) return "O piso a aplicar precisa estar entre 0 e 100.";
+  }
+  return null;
+}
+
+$("#btn-conferir").addEventListener("click", async () => {
+  const problema = validarFormulario();
+  if (problema) { avisar("#recado", "erro", esc(problema)); return; }
+  avisar("#recado", "", "");
+  $("#conferencia").innerHTML = '<div class="vazio"><span class="carregando"></span> conferindo…</div>';
+  try {
+    CONFERIDO = await chamar("/api/conferir", {
+      solicitante: $("#quem").value.trim(),
+      filiais: Array.from(SELECAO),
+      produtos: lerProdutos(),
+    });
+    desenharConferencia();
+  } catch (e) {
+    CONFERIDO = null;
+    $("#conferencia").innerHTML = '<div class="aviso erro">' + esc(e.message) + "</div>";
+  }
+});
+
+function desenharConferencia() {
+  const r = CONFERIDO.resumo || {};
+  const itens = CONFERIDO.itens || [];
+  const bloqueados = itens.filter((i) => i.bloqueado);
+  const impede = ACAO === "fechar" && bloqueados.length > 0;
+
+  /* O que realmente vai mudar: abrir só muda o que está fechado, e vice-versa.
+     Dizer isso agora evita o susto de "mandei 200 e mudou 12". */
+  const vaiMudar = ACAO === "abrir" ? r.fechados : (r.abertos - (impede ? bloqueados.length : 0));
+
+  let html = "";
+
+  if (impede) {
+    const donos = {};
+    bloqueados.forEach((i) => { donos[i.dono] = (donos[i.dono] || 0) + 1; });
+    html += '<div class="aviso erro"><b>Quem abriu é quem fecha.</b> ' +
+      bloqueados.length + (bloqueados.length === 1 ? " produto foi aberto" : " produtos foram abertos") +
+      " por outra pessoa, então este pedido não passa:<ul>" +
+      Object.keys(donos).map((d) => "<li>" + esc(d) + " — " + donos[d] + " produto(s)</li>").join("") +
+      "</ul>Tire esses códigos da lista, ou peça para quem abriu fechar.</div>";
+  }
+
+  if (r.sem_dono && ACAO === "fechar" && !impede) {
+    html += '<div class="aviso info">' + r.sem_dono + " produto(s) já estavam abertos <b>antes deste sistema</b>. " +
+      "Ninguém foi registrado como responsável na época, então qualquer um pode fechar.</div>";
+  }
+
+  if (r.nao_cadastrados) {
+    html += '<div class="aviso atencao">' + r.nao_cadastrados +
+      " combinação(ões) de filial e código não existem no cadastro — vão ser simplesmente ignoradas.</div>";
+  }
+
+  html += '<div class="aviso ' + (impede ? "erro" : vaiMudar ? "ok" : "atencao") + '">' +
+    (impede ? "Nada será alterado enquanto houver produto de outra pessoa."
+            : vaiMudar ? "<b>" + vaiMudar + " produto(s)</b> vão " + (ACAO === "abrir" ? "abrir" : "fechar") +
+                         " em " + SELECAO.size + " filial(is)."
+                       : "Nenhum produto muda: todos já estão como você pediu.") + "</div>";
+
+  html += '<div class="rolagem" style="max-height:340px"><table><thead><tr>' +
+    '<th>Filial</th><th class="num">Código</th><th>Produto</th><th>Hoje</th><th>Quem abriu</th>' +
+    "</tr></thead><tbody>" +
+    itens.slice(0, 500).map((i) => {
+      const selo = i.bloqueado ? '<span class="selo-txt bloqueado">de outra pessoa</span>'
+        : i.aberto ? '<span class="selo-txt aberto">aberto</span>'
+        : '<span class="selo-txt fechado">piso ' + (i.piso == null ? "?" : i.piso + "%") + "</span>";
+      const dono = i.bloqueado ? "<b>" + esc(i.dono) + "</b>"
+        : i.sem_dono ? '<span class="selo-txt sem-dono">antes do sistema</span>'
+        : esc(i.dono || "—");
+      return "<tr><td>" + i.filial + '</td><td class="num">' + i.codprod + "</td><td>" +
+        esc(i.descricao || "—") + "</td><td>" + selo + "</td><td>" + dono +
+        (i.desde ? ' <span class="ajuda">' + faz(i.desde) + "</span>" : "") + "</td></tr>";
+    }).join("") + "</tbody></table></div>";
+
+  if (itens.length > 500) {
+    html += '<p class="ajuda" style="margin-top:9px">mostrando 500 de ' + itens.length + " linhas</p>";
+  }
+
+  $("#conferencia").innerHTML = html;
+  $("#btn-executar").disabled = impede || !vaiMudar;
+}
+
+/* ------------------------------------------------------------- executar */
+$("#btn-executar").addEventListener("click", async () => {
+  if (!CONFERIDO) { avisar("#recado", "erro", "Confira antes de executar."); return; }
+  const produtos = lerProdutos();
+  const confirma = ACAO === "abrir"
+    ? "Abrir a margem de " + produtos.length + " produto(s) em " + SELECAO.size + " filial(is)?"
+    : "Fechar a margem de " + produtos.length + " produto(s), aplicando piso de " + $("#piso").value + "%?";
+  if (!window.confirm(confirma + "\n\nIsso muda o cadastro no WinThor agora.")) return;
+
+  const botao = $("#btn-executar");
+  botao.disabled = true;
+  botao.innerHTML = '<span class="carregando"></span> executando…';
+  try {
+    const r = await chamar("/api/executar", {
+      solicitante: $("#quem").value.trim(),
+      motivo: $("#motivo").value.trim(),
+      acao: ACAO,
+      filiais: Array.from(SELECAO),
+      produtos: produtos,
+      margem: ACAO === "fechar" ? Number($("#piso").value) : null,
+    });
+    avisar("#recado", "ok", "<b>Pedido #" + r.id + " concluído.</b> " + esc(r.mensagem || "") +
+      "<br>Fica no histórico com o seu nome e o motivo que você escreveu.");
+    $("#produtos").value = "";
+    $("#motivo").value = "";
+    $("#conferencia").innerHTML = '<div class="vazio">Pedido executado. Faça outro quando precisar.</div>';
+    invalidar();
+    await carregar();
+  } catch (e) {
+    const b = (e.dados && e.dados.bloqueios) || null;
+    avisar("#recado", "erro", "<b>Não executei.</b> " + esc(e.message) +
+      (b ? "<ul>" + b.slice(0, 20).map((x) =>
+        "<li>filial " + x[0] + ", produto " + x[1] + " — aberto por " + esc(x[2]) + "</li>").join("") + "</ul>" : ""));
+  } finally {
+    botao.innerHTML = "Executar no WinThor";
+    botao.disabled = true;
+  }
+});
+
+/* ======================================================================
+   O que esta aberto
+   ====================================================================== */
+function desenharAbertos() {
+  const filtro = $("#busca").value.trim().toLowerCase();
+  const linhas = (DADOS.abertos || []).filter((l) => !filtro ||
+    String(l[1]).includes(filtro) ||
+    String(l[2] || "").toLowerCase().includes(filtro) ||
+    String(l[3] || "").toLowerCase().includes(filtro));
+
+  const corpo = $("#tb-abertos tbody");
+  corpo.innerHTML = linhas.length
+    ? linhas.slice(0, 1500).map((l) =>
+        "<tr><td>Filial " + l[0] + '</td><td class="num">' + l[1] + "</td><td>" + esc(l[2] || "—") + "</td><td>" +
+        (l[3] ? esc(l[3]) : '<span class="selo-txt sem-dono">antes do sistema</span>') + "</td><td>" +
+        (l[4] ? quando(l[4], true) + ' <span class="ajuda">' + faz(l[4]) + "</span>" : "—") + "</td><td>" +
+        esc(l[5] || "—") + "</td></tr>").join("")
+    : '<tr><td colspan="6" class="vazio">Nada aberto' + (filtro ? " com esse filtro" : "") + ".</td></tr>";
+
+  $("#conta-abertos").textContent = linhas.length > 1500
+    ? "mostrando 1.500 de " + num(linhas.length) + " linhas"
+    : num(linhas.length) + " produto(s) aberto(s)";
+}
+$("#busca").addEventListener("input", () => DADOS && desenharAbertos());
+
+/* ======================================================================
+   Painel de uso
+   ====================================================================== */
+function kpi(rotulo, valor, nota, ouro) {
+  return '<article class="kpi"><div class="rotulo">' + rotulo + "</div>" +
+    '<div class="valor' + (ouro ? " ouro" : "") + '">' + valor + "</div>" +
+    '<div class="nota">' + (nota || "") + "</div></article>";
+}
+
+function desenharPainel() {
+  const p = DADOS.painel;
+  $("#periodo-painel").textContent = "Últimos " + p.dias + " dias, pedidos já concluídos.";
+
+  $("#kpis").innerHTML =
+    kpi("Abertos agora", num(p.abertos_total), "em todas as filiais", true) +
+    kpi("Sem dono registrado", num(p.abertos_sem_dono),
+        p.abertos_sem_dono ? "abertos antes do sistema" : "todos têm responsável") +
+    kpi("Aberturas no período", num(p.total_aberturas), "pedidos concluídos") +
+    kpi("Fechamentos no período", num(p.total_fechamentos), "pedidos concluídos") +
+    kpi("Pessoas que usaram", num((p.por_pessoa || []).length), "no período");
+
+  desenharSerie(p.serie || []);
+  barras("#responsaveis", (p.responsaveis || []).map((l) => [l[0], l[1], l[2] ? "mais antigo " + faz(l[2]) : ""]),
+         "var(--viz-1)", "ninguém com produto aberto");
+  barras("#por-pessoa", (p.por_pessoa || []).map((l) => [l[0], l[1], l[3] + " produto(s)"]),
+         "var(--viz-1)", "nenhum pedido no período");
+  barras("#por-filial", (p.por_filial || []).map((l) => ["Filial " + l[0], l[1], l[2] + " fechamento(s)"]),
+         "var(--viz-2)", "nenhum pedido no período");
+}
+
+/* Barras horizontais: uma série, rótulo direto no fim. Nada de pizza para
+   comparar quantidades — comprimento se lê melhor que ângulo. */
+function barras(onde, linhas, cor, vazio) {
+  if (!linhas.length) { $(onde).innerHTML = '<div class="vazio">' + vazio + "</div>"; return; }
+  const teto = Math.max.apply(null, linhas.map((l) => l[1])) || 1;
+  $(onde).innerHTML = '<div class="barras">' + linhas.slice(0, 12).map((l, i) =>
+    '<div class="barra-linha"><div class="quem" title="' + esc(l[0]) + '">' + esc(l[0]) + "</div>" +
+    '<div class="barra-trilho"><div class="barra-cheia" style="width:' +
+      (l[1] / teto * 100).toFixed(1) + "%;background:" + cor + ";animation-delay:" + (i * 55) + 'ms"></div></div>' +
+    '<div class="n">' + num(l[1]) + "</div></div>" +
+    (l[2] ? '<div class="ajuda" style="grid-column:2/4;margin:-5px 0 3px">' + esc(l[2]) + "</div>" : "")
+  ).join("") + "</div>";
+}
+
+/* Série no tempo: duas linhas no MESMO eixo — as duas contam pedidos, então
+   comparar é legítimo. Eixo duplo aqui seria mentira gráfica. */
+function desenharSerie(serie) {
+  if (!serie.length) { $("#serie").innerHTML = '<div class="vazio">nenhum pedido no período</div>'; return; }
+  const L = 60, R = 18, T = 16, B = 34, A = 760, H = 240;
+  const teto = Math.max(1, Math.max.apply(null, serie.map((l) => Math.max(l[1], l[2]))));
+  const x = (i) => L + (serie.length === 1 ? (A - L - R) / 2 : i * (A - L - R) / (serie.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / teto);
+
+  const caminho = (col) => serie.map((l, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(l[col]).toFixed(1)).join(" ");
+  const marcas = [];
+  for (let k = 0; k <= 4; k++) marcas.push(Math.round(teto * k / 4));
+
+  let svg = '<svg class="grafico" viewBox="0 0 ' + A + " " + H + '" role="img" aria-label="Aberturas e fechamentos por dia">';
+  Array.from(new Set(marcas)).forEach((v) => {
+    svg += '<line x1="' + L + '" x2="' + (A - R) + '" y1="' + y(v).toFixed(1) + '" y2="' + y(v).toFixed(1) +
+      '" stroke="var(--grade)" stroke-width="1"/>' +
+      '<text x="' + (L - 10) + '" y="' + (y(v) + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="var(--txt-3)">' + v + "</text>";
+  });
+  svg += '<path d="' + caminho(2) + '" fill="none" stroke="var(--viz-2)" stroke-width="2" stroke-linejoin="round"/>';
+  svg += '<path d="' + caminho(1) + '" fill="none" stroke="var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>';
+  serie.forEach((l, i) => {
+    svg += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(l[2]).toFixed(1) + '" r="4" fill="var(--viz-2)" stroke="var(--surface-1)" stroke-width="2"><title>' +
+      quando(l[0]) + ": " + l[2] + " fechamento(s)</title></circle>";
+    svg += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(l[1]).toFixed(1) + '" r="4" fill="var(--viz-1)" stroke="var(--surface-1)" stroke-width="2"><title>' +
+      quando(l[0]) + ": " + l[1] + " abertura(ões)</title></circle>";
+  });
+  /* Datas só nas pontas e no meio: um rótulo por ponto vira mancha. */
+  [0, Math.floor(serie.length / 2), serie.length - 1].filter((v, i, a) => a.indexOf(v) === i).forEach((i) => {
+    svg += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="' +
+      (i === 0 ? "start" : i === serie.length - 1 ? "end" : "middle") +
+      '" font-size="11" fill="var(--txt-3)">' + quando(serie[i][0]) + "</text>";
+  });
+  svg += "</svg>";
+  $("#serie").innerHTML = svg;
+}
+
+/* ======================================================================
+   Historico
+   ====================================================================== */
+function desenharHistorico() {
+  const linhas = DADOS.historico || [];
+  /* margem_historico devolve cada pedido como ARRAY, na ordem abaixo — e mais
+     leve na rede que repetir o nome das colunas sessenta vezes. */
+  const H = { ID: 0, QUANDO: 1, QUEM: 2, MOTIVO: 3, ACAO: 4, FILIAIS: 5,
+              QTD: 6, MARGEM: 7, STATUS: 8, LINHAS: 9, MENSAGEM: 10 };
+
+  $("#tb-historico tbody").innerHTML = linhas.length
+    ? linhas.map((h) =>
+        '<tr><td class="num">' + h[H.ID] + "</td><td>" + quando(h[H.QUANDO], true) +
+        "</td><td>" + esc(h[H.QUEM]) +
+        "</td><td>" + (h[H.ACAO] === "abrir" ? "Abrir" :
+                       "Fechar" + (h[H.MARGEM] != null ? " (" + h[H.MARGEM] + "%)" : "")) +
+        "</td><td>" + (h[H.FILIAIS] || []).join(", ") +
+        '</td><td class="num">' + num(h[H.QTD]) +
+        '</td><td><span class="selo-txt ' + esc(h[H.STATUS]) + '">' + esc(h[H.STATUS]) + "</span></td><td>" +
+        esc(h[H.MOTIVO]) + "</td><td>" + esc(h[H.MENSAGEM] || "—") + "</td></tr>").join("")
+    : '<tr><td colspan="9" class="vazio">Nenhum pedido ainda.</td></tr>';
+}
+
+/* ====================================================================== */
+carregar();
+setInterval(carregar, 120000);   // a foto do WinThor muda a cada carga do BI
+</script>
+</body>
+</html>

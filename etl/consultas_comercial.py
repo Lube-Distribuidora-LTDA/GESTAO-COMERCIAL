@@ -91,6 +91,10 @@ FILIAIS_MARGEM = tuple(
 
 # Consulta6 (comissao): filiais 1, 7, 10, 11 e 12 desde 01/01/2025.
 DATA_INICIAL_COMISSAO = _data_env("COMISSAO_DATA_INICIAL", "2025-01-01")
+# Filiais onde o piso de margem (PCPRODFILIAL.PERCMARGEMMIN) e aberto e fechado
+# pelo comercial. Sao as mesmas quatro que os .bat antigos atendiam.
+FILIAIS_PISO_MARGEM = (1, 7, 11, 12)
+
 FILIAIS_COMISSAO = tuple(
     int(f) for f in os.environ.get("COMISSAO_FILIAIS", "1,7,10,11,12").replace(";", ",").split(",") if f.strip()
 )
@@ -425,6 +429,26 @@ def _mapear_pedido(r: dict) -> tuple:
 # CATALOGO
 # ===========================================================================
 
+# ---------------------------------------------------------------------------
+# O PISO DE MARGEM DE CADA PRODUTO, POR FILIAL
+# ---------------------------------------------------------------------------
+#
+# PERCMARGEMMIN e a margem minima que o produto aceita naquela filial. Quando
+# fica NULL, o piso sai do caminho: da para vender abaixo da margem. E disso
+# que o comercial fala quando diz "abrir o sistema".
+#
+# Esta consulta e a FOTO: o painel de abertura mostra o que esta aberto agora
+# lendo daqui, nao do nosso proprio historico. Se alguem mexer por fora — no
+# WinThor, ou num .bat que sobrou — a tela conta a verdade do mesmo jeito.
+SQL_MARGEM_FILIAL = f"""
+SELECT TO_NUMBER(pf.CODFILIAL) AS codfilial,
+       pf.CODPROD             AS codprod,
+       pf.PERCMARGEMMIN       AS percmargemmin
+  FROM PCPRODFILIAL pf
+ WHERE pf.CODFILIAL IN ({_lista(FILIAIS_PISO_MARGEM)})
+"""
+
+
 CONSULTAS: list[Consulta] = [
     # ---------------- dimensoes (upsert) ----------------
     Consulta(
@@ -523,6 +547,22 @@ CONSULTAS: list[Consulta] = [
         linhas_esperadas=205503,
         tolerancia_pct=0.30,
         binds={"data_inicial": DATA_INICIAL_COMISSAO},
+        grupo="rapidas",
+    ),
+    Consulta(
+        nome="margem_filial",
+        descricao="Piso de margem de cada produto por filial (PCPRODFILIAL.PERCMARGEMMIN)",
+        pagina="Abertura de margem",
+        sql=SQL_MARGEM_FILIAL,
+        destino="comercial.fato_margem_filial",
+        colunas=("codfilial", "codprod", "percmargemmin", "data_carga"),
+        mapear=lambda r: (inteiro(r["codfilial"]), inteiro(r["codprod"]),
+                          r["percmargemmin"], AGORA()),
+        # Nao tem referencia no Power BI: e cadastro, nao movimento. O numero
+        # abaixo e a ordem de grandeza (4 filiais x ~34 mil produtos) so para o
+        # diagnostico gritar se a consulta voltar vazia.
+        linhas_esperadas=137000,
+        tolerancia_pct=0.50,
         grupo="rapidas",
     ),
     Consulta(

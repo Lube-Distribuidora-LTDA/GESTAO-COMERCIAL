@@ -293,63 +293,106 @@ hora** — README que diz ser restrito quando está aberto é pior que nenhum.
 
 ## Abrir e fechar a margem das filiais
 
-A quinta página do painel (**Operação › Margem das filiais**) substitui oito
-arquivos `.bat` que ficavam em `Z:\Alexandre TI\BATS`: quatro punham
+Um sistema separado, que roda **dentro da rede**, substitui oito arquivos `.bat`
+que ficavam em `Z:\Alexandre TI\BATS`: quatro punham
 `PCPRODFILIAL.PERCMARGEMMIN = 5` e quatro punham `NULL`, um par por filial.
 
 - **Abrir** tira o piso de margem: o produto passa a poder ser vendido abaixo da
   margem naquela filial.
-- **Fechar** devolve o piso (o padrão da casa é 5%, mas o valor vai no pedido).
+- **Fechar** devolve o piso (o padrao da casa e 5%, mas o valor vai no pedido).
 
-### Por que é uma fila, e não um comando direto
-
-O painel roda na Vercel; o Oracle do WinThor vive em `192.168.0.5`, dentro da
-rede, e não é alcançável de fora. Então:
+### Onde ele mora
 
 ```
-painel (Vercel) ──grava o pedido──► comercial.margem_solicitacao (Supabase)
-                                              │
-                          agente_margem.py ───┘ lê de minuto em minuto,
-                          (na máquina do ETL)   executa no WinThor e grava
-                                                o resultado de volta
+etl/servidor_margem.py     programa que fica no ar na maquina do BI
+etl/painel_margem.html     a pagina que ele serve
 ```
 
-Quem está na tela vê o pedido passar por **na fila → concluído** (ou **erro**,
-com o motivo escrito). Enquanto houver pedido andando, a tela se atualiza
-sozinha.
+Sobe sozinho com a maquina (tarefa **BI Comercial - Servidor de margem**, criada
+pelo `instalar_e_agendar.ps1`). Para subir na mao e ver a janela:
+`iniciar_servidor_margem.bat`.
 
-### O que os `.bat` não davam, e agora existe
+Quem esta no comercial abre `http://<maquina-do-bi>:8080` no navegador.
 
-| | `.bat` | painel |
+### Por que um programa, e nao um `index.html` na pasta da rede
+
+Um HTML aberto do disco nao executa `.bat` nem fala com o Oracle: o navegador
+impede — e ainda bem, senao qualquer pagina da internet tambem conseguiria. A
+pagina existe, mas quem executa e o programa, que roda numa maquina so.
+
+E os `.bat` deixam de ser necessarios de proposito: chama-los de volta traria a
+senha do WinThor escrita dentro do arquivo e perderia o registro, que era
+justamente o que faltava.
+
+### A regra: quem abriu e quem fecha
+
+Quem abriu um produto e o unico que pode fechar **aquele** produto. Sem excecao.
+O bloqueio mora em `comercial.margem_registrar`, no banco — nao na tela.
+
+Produto que ja estava aberto **antes** deste sistema nao tem dono (os `.bat` nao
+registravam ninguem), entao qualquer um fecha. Isso nao e excecao a regra: e a
+ausencia de alguem a quem cobrar. A tela diz isso com todas as letras, e o
+painel conta quantos sao.
+
+A tela mostra os donos **antes** de executar: em vez de montar um pedido de 200
+codigos e levar um "nao" no final, a pessoa ve, produto a produto, o que e dela
+e o que nao e.
+
+### O estado vem do WinThor, nao do nosso registro
+
+A consulta `margem_filial` traz `PCPRODFILIAL.PERCMARGEMMIN` das quatro filiais
+a cada carga (137 mil linhas, 6 segundos) para `comercial.fato_margem_filial`. E
+dali que sai "o que esta aberto agora". Se alguem mexer por fora — no proprio
+WinThor, ou num `.bat` que sobrou em algum lugar — a tela conta a verdade do
+mesmo jeito.
+
+Entre uma carga e outra, o proprio agente corrige as linhas que acabou de mudar:
+sem isso, um produto aberto as 10h15 pareceria fechado (e portanto sem dono) ate
+as 11h, e nesse intervalo qualquer um poderia fechar o que outra pessoa abriu.
+
+### O que os `.bat` nao davam, e agora existe
+
+| | `.bat` | sistema |
 |---|---|---|
-| Quem pediu, quando e por quê | nada | obrigatório, e fica no histórico |
+| Quem pediu, quando e por que | nada | obrigatorio, e fica no historico |
 | Valor anterior de cada produto | perdido | gravado em `comercial.margem_alteracao` |
-| Quantas linhas mudaram | não dizia | registrado por pedido |
+| Quantas linhas mudaram | nao dizia | registrado por pedido |
+| Quem pode fechar | qualquer um | so quem abriu |
 | Montagem do SQL | texto concatenado com o que foi digitado | *bind*, sempre |
-| Senha do WinThor | escrita dentro do arquivo, numa pasta de rede | no `ENV` da máquina |
-| Rodar em várias filiais | um arquivo por filial | uma caixa de seleção |
+| Senha do WinThor | escrita dentro do arquivo, numa pasta de rede | no `ENV` da maquina |
+| Rodar em varias filiais | um arquivo por filial | uma caixa de selecao |
+| Saber o que esta aberto | ninguem sabia | painel, com dono e ha quanto tempo |
 
 ### Ligando
 
-1. No `ENV` da máquina do ETL, `ORACLE_USER_ESCRITA` e `ORACLE_PASSWORD_ESCRITA`
-   — um usuário com `UPDATE` em `PCPRODFILIAL`. O usuário do ETL é de leitura e
+1. No `ENV` da maquina do BI, `ORACLE_USER_ESCRITA` e `ORACLE_PASSWORD_ESCRITA`
+   — um usuario com `UPDATE` em `PCPRODFILIAL`. O usuario do ETL e de leitura e
    continua sendo. Sem isso, o pedido fica com status **erro** e a mensagem
    dizendo o que falta.
-2. `instalar_e_agendar.ps1` (de novo), que cria a tarefa **BI Comercial -
-   Agente de margem**, de 1 em 1 minuto.
-3. Na Vercel: **primeiro** ligue a proteção de acesso do painel, **depois** crie
-   `MARGEM_ATIVA=sim`. Sem essa variável o `POST /api/margem` responde 423 e
-   explica o porquê: enquanto o painel estiver aberto para quem tiver o link, um
-   botão que muda o cadastro de produto não pode ficar ao alcance de qualquer um.
+2. Opcional, mas recomendado: `MARGEM_PESSOAS="Fulano;Beltrano;Sicrano"`. Com a
+   lista, o nome vira uma escolha fechada e a regra de quem fecha vale de
+   verdade; sem ela, o nome e digitado livre e vale pelo que a pessoa escreveu.
+3. `instalar_e_agendar.ps1` (de novo), que copia o servidor e cria a tarefa que
+   o sobe junto com a maquina.
+4. Na Vercel, `MARGEM_ENDERECO=http://<maquina>:8080` para o painel apontar o
+   caminho certo a quem procurar por la.
 
-### Para a TI, sem abrir o painel
+### No painel da Vercel: so consulta
+
+A pagina **Operacao › Margem das filiais** mostra o que esta aberto, de quem e,
+quem mais abre, quais filiais e o historico — e nao tem botao de executar. O
+Oracle nao e alcancavel da Vercel, e um botao que muda o cadastro de produto da
+empresa nao precisa existir num endereco publico.
+
+### Para a TI, sem abrir a pagina
 
 ```
 python agente_margem.py --acao abrir --filiais 1 7 --produtos 1234 5678 \
        --nome "Julio" --motivo "liberacao para a campanha de outubro" --agora
 ```
 
-Passa pela mesma fila e pelo mesmo registro: nada acontece sem nome e motivo.
+Passa pela mesma regra e pelo mesmo registro: nada acontece sem nome e motivo,
+e um `fechar` de produto de outra pessoa e recusado igual.
 
 ## As consultas
 

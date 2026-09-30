@@ -44,12 +44,14 @@ $ErrorActionPreference = "Stop"
 $ARQUIVOS = @(
     "bi_comum.py", "consultas_comercial.py", "sync_bi_comercial.py",
     "diagnostico_bi_comercial.py", "executar.py", "_teste_agendador.py",
-    "agente_margem.py", "requirements.txt", "ENV"
+    "agente_margem.py", "servidor_margem.py", "painel_margem.html",
+    "iniciar_servidor_margem.bat", "requirements.txt", "ENV"
 )
 
 $NOME_RAPIDAS = "BI Comercial - Sync rapidas"
 $NOME_PESADAS = "BI Comercial - Sync margem"
 $NOME_MARGEM  = "BI Comercial - Agente de margem"
+$NOME_SERVIDOR = "BI Comercial - Servidor de margem"
 $NOME_COBAIA  = "BI Comercial - teste de agendamento"
 
 function Pausar {
@@ -291,6 +293,36 @@ try {
         }
     }
 
+    # --- tarefa que fica no ar o tempo todo ---------------------------------
+    # O servidor da margem nao "roda e termina": ele fica escutando enquanto a
+    # maquina estiver ligada, para o pessoal do comercial abrir a pagina quando
+    # precisar. Por isso, ao contrario das cargas, ele nao tem limite de tempo
+    # de execucao - um limite mataria o servidor no meio do expediente.
+    function RegistrarServidor {
+        param($Nome, $Argumento, $Descricao, $Modo)
+
+        $acao = New-ScheduledTaskAction -Execute $pythonw -Argument $Argumento -WorkingDirectory $Destino
+        $gatilhos = @(
+            (New-ScheduledTaskTrigger -AtStartup),
+            (New-ScheduledTaskTrigger -AtLogOn -User $Usuario)
+        )
+        $configServidor = New-ScheduledTaskSettingsSet `
+            -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -ExecutionTimeLimit ([TimeSpan]::Zero) `
+            -RestartInterval (New-TimeSpan -Minutes 2) -RestartCount 5 `
+            -MultipleInstances IgnoreNew -Hidden
+
+        if ($Modo -eq "Senha") {
+            Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilhos `
+                -Settings $configServidor -User $Usuario -Password $senha `
+                -Description $Descricao -Force | Out-Null
+        } else {
+            $p = New-ScheduledTaskPrincipal -UserId $Usuario -LogonType $Modo -RunLevel Limited
+            Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilhos `
+                -Settings $configServidor -Principal $p -Description $Descricao -Force | Out-Null
+        }
+    }
+
     # --- a cobaia: prova se o modo realmente dispara um processo ------------
     $marca = Join-Path $Destino "_teste_agendador.txt"
 
@@ -397,6 +429,14 @@ try {
         -Descricao "BI Comercial: executa no WinThor os pedidos de abrir/fechar margem feitos no painel."
     Write-Host "  [ok] $NOME_MARGEM (a cada 1 minuto)" -ForegroundColor Green
 
+    # o sistema que o comercial abre no navegador
+    RegistrarServidor -Nome $NOME_SERVIDOR `
+        -Argumento ('"' + (Join-Path $Destino "servidor_margem.py") + '"') `
+        -Modo $modoBom.nome `
+        -Descricao "BI Comercial: serve a pagina de abrir e fechar a margem das filiais para a rede."
+    try { Start-ScheduledTask -TaskName $NOME_SERVIDOR } catch {}
+    Write-Host "  [ok] $NOME_SERVIDOR (sobe junto com a maquina)" -ForegroundColor Green
+
     # --- carga de teste de verdade -----------------------------------------
     $log   = Join-Path $Destino "sync_bi_comercial.log"
     $falha = Join-Path $Destino "falha_inicial.log"
@@ -455,6 +495,7 @@ try {
     Write-Host "  consultas rapidas   : $($horariosRapidas -join ', ')"
     Write-Host "  margem por item     : $($horariosPesadas -join ', ')"
     Write-Host "  agente de margem    : a cada 1 minuto"
+    Write-Host "  servidor de margem  : no ar o tempo todo"
     Write-Host "  pasta de execucao   : $Destino"
     Write-Host "================================================================" -ForegroundColor Cyan
     if ($modoBom.nome -eq "Interactive") {

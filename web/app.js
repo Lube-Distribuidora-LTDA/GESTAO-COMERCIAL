@@ -50,6 +50,7 @@ var PAGINAS = [
   { id: "pedidos",   grupo: "Vendas", nome: "Pedidos em aberto", icone: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" },
   { id: "devolucao", grupo: "Vendas", nome: "Devoluções",        icone: "M3 10h11a4 4 0 1 1 0 8h-1M3 10l4-4M3 10l4 4" },
   { id: "operacao",  grupo: "Operação", nome: "Margem das filiais",
+    /* consulta: quem abre e fecha e o sistema da rede */
     icone: "M12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0" }
 ];
 
@@ -1662,308 +1663,260 @@ function abrirDevolucoesDoRca(codusur) {
 }
 
 /* ---------------------------------------------------------------------------
- * Página 5 — MARGEM DAS FILIAIS (abre e fecha o piso de margem no WinThor)
+ * Página 5 — MARGEM DAS FILIAIS (acompanhamento)
  *
- * Esta é a única tela do painel que ESCREVE em algum lugar. Ela não executa
- * nada: registra um pedido, e o agente que roda dentro da rede executa no
- * WinThor — o Oracle não é alcançável da Vercel. Por isso existe o estado
- * "pendente" e a tela se atualiza sozinha enquanto houver pedido em andamento.
+ * Esta tela MOSTRA; não mexe. Abrir e fechar o piso de margem é feito no
+ * sistema local, numa máquina dentro da rede: de lá o Oracle do WinThor é
+ * alcançável e a mudança acontece na hora, sem fila e sem espera.
+ *
+ * Aqui ficam os números — o que está aberto agora, de quem é a
+ * responsabilidade, quem mais abre, quais filiais, e o histórico com o motivo
+ * que cada pessoa escreveu.
  * ------------------------------------------------------------------------ */
-var OP = {
-  acao: "abrir",
-  filiais: new Set([1]),
-  margem: 5,
-  produtos: "",
-  nome: "",
-  motivo: "",
-  etapa: "formulario",      /* "formulario" | "confirmar" */
-  enviando: false,
-  historico: null,
-  ativo: null,
-  erro: null
-};
-try { OP.nome = localStorage.getItem("comercial_nome") || ""; } catch (e) {}
+var OP = { dados: null, erro: null };
 var OP_RELOGIO = null;
-
-function codigosDigitados() {
-  return String(OP.produtos || "")
-    .split(/[^0-9]+/)
-    .filter(function (x) { return x.length; })
-    .map(Number)
-    .filter(function (x, i, a) { return x > 0 && a.indexOf(x) === i; });
-}
-
-function paginaOperacao(raiz) {
-  var codigos = codigosDigitados();
-  var filiais = Array.from(OP.filiais).sort(function (a, b) { return a - b; });
-
-  /* ---------- o que esta tela faz, em uma frase ---------- */
-  var cab = painel("Abrir e fechar a margem mínima",
-    "“Abrir” tira o piso de margem do produto naquela filial — ele passa a poder ser vendido " +
-    "abaixo da margem. “Fechar” devolve o piso. A mudança vale no WinThor, no cadastro do produto, " +
-    "e fica registrada com quem pediu, quando e por quê.");
-
-  if (OP.ativo === false) {
-    cab.corpo.appendChild(nota("Esta função está <b>desligada</b>. Enquanto o painel estiver aberto " +
-      "para quem tiver o link, um botão que muda o cadastro de produto não pode ficar ao alcance de " +
-      "qualquer um. Ligue a proteção de acesso do painel na Vercel e depois crie a variável " +
-      "<b>MARGEM_ATIVA=sim</b> no projeto. O histórico abaixo continua visível.", "atencao"));
-  }
-  raiz.appendChild(cab);
-
-  /* ---------- formulário ---------- */
-  var pf = painel(OP.etapa === "confirmar" ? "Confira antes de enviar" : "Novo pedido");
-  var f = el("div", "form");
-
-  if (OP.etapa === "formulario") {
-    var gAcao = el("div", "campo");
-    gAcao.appendChild(el("label", null, "O que fazer"));
-    gAcao.appendChild(chips(null, [
-      { valor: "abrir", rotulo: "Abrir a margem" },
-      { valor: "fechar", rotulo: "Fechar a margem" }
-    ], OP.acao, function (v) { OP.acao = v; OP.erro = null; desenhar(true); }, "ouro"));
-    gAcao.appendChild(el("div", "dica", OP.acao === "abrir"
-      ? "Tira o piso: o produto pode ser vendido abaixo da margem naquela filial."
-      : "Devolve o piso de margem ao produto."));
-    f.appendChild(gAcao);
-
-    var gFil = el("div", "campo");
-    gFil.appendChild(el("label", null, "Em quais filiais"));
-    var linhaFil = el("div", "fgrupo");
-    [1, 7, 11, 12].forEach(function (n) {
-      var b = el("button", "chip" + (OP.filiais.has(n) ? " on" : ""), "Filial " + n);
-      b.type = "button";
-      b.addEventListener("click", function () {
-        if (OP.filiais.has(n)) OP.filiais.delete(n); else OP.filiais.add(n);
-        OP.erro = null; desenhar(true);
-      });
-      linhaFil.appendChild(b);
-    });
-    gFil.appendChild(linhaFil);
-    gFil.appendChild(el("div", "dica", "Pode marcar mais de uma."));
-    f.appendChild(gFil);
-
-    if (OP.acao === "fechar") {
-      var gM = el("div", "campo");
-      gM.appendChild(el("label", null, "Margem a aplicar (%)"));
-      var im = el("input");
-      im.type = "number"; im.min = "0"; im.max = "100"; im.step = "0.5"; im.value = OP.margem;
-      im.addEventListener("input", function () { OP.margem = im.value; });
-      gM.appendChild(im);
-      gM.appendChild(el("div", "dica", "O padrão da casa é 5%."));
-      f.appendChild(gM);
-    }
-
-    var gProd = el("div", "campo largo");
-    gProd.appendChild(el("label", null, "Códigos dos produtos"));
-    var tp = el("textarea");
-    tp.value = OP.produtos;
-    tp.placeholder = "Cole ou digite os códigos, separados por espaço, vírgula ou um por linha.";
-    tp.addEventListener("input", function () {
-      OP.produtos = tp.value;
-      var n = codigosDigitados().length;
-      contador.textContent = n ? n + (n > 1 ? " códigos reconhecidos" : " código reconhecido") : "nenhum código ainda";
-    });
-    gProd.appendChild(tp);
-    var contador = el("div", "dica", codigos.length ? codigos.length + " códigos reconhecidos" : "nenhum código ainda");
-    gProd.appendChild(contador);
-    f.appendChild(gProd);
-
-    var gNome = el("div", "campo");
-    gNome.appendChild(el("label", null, "Quem está pedindo"));
-    var inome = el("input");
-    inome.value = OP.nome; inome.placeholder = "Seu nome";
-    inome.addEventListener("input", function () {
-      OP.nome = inome.value;
-      try { localStorage.setItem("comercial_nome", OP.nome); } catch (e) {}
-    });
-    gNome.appendChild(inome);
-    f.appendChild(gNome);
-
-    var gMot = el("div", "campo largo");
-    gMot.appendChild(el("label", null, "Por que está fazendo isso"));
-    var tm = el("textarea");
-    tm.value = OP.motivo;
-    tm.style.fontFamily = '"IBM Plex Sans"';
-    tm.placeholder = "Ex.: liberação para a campanha de outubro, negociado com o cliente X.";
-    tm.addEventListener("input", function () { OP.motivo = tm.value; });
-    gMot.appendChild(tm);
-    gMot.appendChild(el("div", "dica", "Fica no histórico para sempre. Escreva pensando em quem vai ler daqui a seis meses."));
-    f.appendChild(gMot);
-
-    pf.corpo.appendChild(f);
-
-    if (OP.erro) pf.corpo.appendChild(nota(OP.erro, "grave"));
-
-    var rodape = el("div");
-    rodape.style.cssText = "margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;";
-    var bRevisar = el("button", "btn-acao" + (OP.acao === "abrir" ? "" : " perigo"), "Revisar pedido");
-    bRevisar.type = "button";
-    bRevisar.addEventListener("click", function () {
-      var problema = validarPedido();
-      if (problema) { OP.erro = problema; desenhar(true); return; }
-      OP.erro = null; OP.etapa = "confirmar"; desenhar(true);
-    });
-    rodape.appendChild(bRevisar);
-    pf.corpo.appendChild(rodape);
-
-  } else {
-    /* ---------- confirmação ---------- */
-    var r = el("div", "resumo");
-    var frase = el("div", "frase");
-    frase.innerHTML = "Vai <b>" + (OP.acao === "abrir" ? "ABRIR" : "FECHAR em " + fNum(OP.margem, 2) + "%") +
-      "</b> a margem de <b>" + fInt(codigos.length) + "</b> produto" + (codigos.length > 1 ? "s" : "") +
-      " na" + (filiais.length > 1 ? "s filiais " : " filial ") + "<b>" + filiais.join(", ") + "</b>" +
-      ", a pedido de <b>" + esc(OP.nome) + "</b>.";
-    r.appendChild(frase);
-    r.appendChild(el("div", "lista", codigos.join("  ")));
-    var mot = el("div", "frase");
-    mot.innerHTML = "Motivo: <b>" + esc(OP.motivo) + "</b>";
-    r.appendChild(mot);
-    var botoes = el("div", "botoes");
-    var bConf = el("button", "btn-acao" + (OP.acao === "abrir" ? "" : " perigo"),
-      OP.enviando ? "Enviando…" : "Confirmar e enviar");
-    bConf.type = "button";
-    bConf.disabled = OP.enviando;
-    bConf.addEventListener("click", enviarPedidoMargem);
-    var bVoltar = el("button", "btn-limpar", "Voltar e corrigir");
-    bVoltar.type = "button";
-    bVoltar.addEventListener("click", function () { OP.etapa = "formulario"; desenhar(true); });
-    botoes.appendChild(bConf); botoes.appendChild(bVoltar);
-    r.appendChild(botoes);
-    if (OP.erro) r.appendChild(nota(OP.erro, "grave"));
-    pf.corpo.appendChild(r);
-  }
-  raiz.appendChild(pf);
-
-  /* ---------- histórico ---------- */
-  var ph = painel("Histórico de pedidos",
-    "Todo pedido fica aqui, com quem pediu, quando, por quê e o que aconteceu de verdade no WinThor.");
-  ph.corpo.remove();
-
-  if (OP.historico == null) {
-    var carregando = el("div", "vazio", "Buscando o histórico…");
-    ph.appendChild(carregando);
-    buscarHistoricoMargem();
-  } else {
-    ph.appendChild(tabela({
-      id: "margem_operacao",
-      tituloCsv: "Pedidos de margem",
-      colunas: [
-        { titulo: "Quando", tipo: "texto", valor: function (l) { return fDataHora(l[1]); },
-          celula: function (l) { return fDataHora(l[1]); }, fixa: 1 },
-        { titulo: "Quem pediu", tipo: "texto", valor: function (l) { return l[2]; },
-          celula: function (l) { return l[2]; }, corta: true },
-        { titulo: "Ação", tipo: "texto", valor: function (l) { return l[4]; },
-          celula: function (l) {
-            return el("span", "selo " + (l[4] === "abrir" ? "atencao" : "info"),
-                      l[4] === "abrir" ? "ABRIR" : "FECHAR " + fNum(l[7], 2) + "%");
-          } },
-        { titulo: "Filiais", tipo: "texto", valor: function (l) { return (l[5] || []).join(", "); },
-          celula: function (l) { return (l[5] || []).join(", "); } },
-        { titulo: "Produtos", num: true, tipo: "inteiro", valor: function (l) { return l[6]; },
-          celula: function (l) { return fInt(l[6]); } },
-        { titulo: "Motivo", tipo: "texto", valor: function (l) { return l[3]; },
-          celula: function (l) { return l[3]; }, corta: true, fraco: true },
-        { titulo: "Situação", tipo: "texto", valor: function (l) { return l[8]; },
-          celula: function (l) {
-            var tom = l[8] === "concluida" ? "bom" : l[8] === "erro" ? "grave"
-                    : l[8] === "pendente" ? "atencao" : "info";
-            var rotulo = l[8] === "concluida" ? "concluído" : l[8] === "erro" ? "erro"
-                       : l[8] === "pendente" ? "na fila" : l[8];
-            return el("span", "selo " + tom, rotulo);
-          } },
-        { titulo: "Linhas", num: true, tipo: "inteiro", valor: function (l) { return l[9]; },
-          celula: function (l) { return l[9] == null ? "—" : fInt(l[9]); } },
-        { titulo: "Resultado", tipo: "texto", valor: function (l) { return l[10]; },
-          celula: function (l) { return l[10] || "—"; }, corta: true, fraco: true }
-      ],
-      linhas: OP.historico,
-      ordemInicial: 0, dirInicial: -1,
-      valorOrdem: function (l, i) {
-        return [l[1], l[2], l[4], (l[5] || []).join(","), n(l[6]), l[3], l[8], n(l[9]), l[10]][i];
-      },
-      csv: true, porPagina: 25,
-      vazio: "Nenhum pedido ainda."
-    }));
-  }
-  raiz.appendChild(ph);
-}
 
 function esc(t) {
   return String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function validarPedido() {
-  if (String(OP.nome).trim().length < 3) return "Escreva quem está pedindo.";
-  if (String(OP.motivo).trim().length < 10) return "Escreva o motivo com pelo menos 10 letras — é o que fica no histórico.";
-  if (!OP.filiais.size) return "Escolha pelo menos uma filial.";
-  var c = codigosDigitados();
-  if (!c.length) return "Informe pelo menos um código de produto.";
-  if (c.length > 500) return "São no máximo 500 produtos por pedido (você informou " + fInt(c.length) + ").";
-  if (OP.acao === "fechar") {
-    var m = Number(OP.margem);
-    if (isNaN(m) || m < 0 || m > 100) return "A margem a aplicar precisa estar entre 0 e 100.";
+/* "há 3 meses" diz mais que uma data quando o assunto é margem esquecida aberta. */
+function desdeQuando(iso) {
+  if (!iso) return "—";
+  var dias = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (dias <= 0) return "hoje";
+  if (dias === 1) return "há 1 dia";
+  if (dias < 30) return "há " + dias + " dias";
+  var meses = Math.round(dias / 30);
+  return meses === 1 ? "há 1 mês" : "há " + meses + " meses";
+}
+
+function paginaOperacao(raiz) {
+  if (OP.erro) {
+    raiz.appendChild(nota("Não consegui ler os dados da margem: " + esc(OP.erro), "grave"));
+    return;
   }
-  return null;
+  if (!OP.dados) {
+    raiz.appendChild(nota("Carregando…", "info"));
+    buscarHistoricoMargem();
+    return;
+  }
+
+  var d = OP.dados;
+  var p = d.painel || {};
+  var porFilial = p.abertos_por_filial || [];
+  var abertos = d.abertos || [];
+  var comDono = n(p.abertos_total) - n(p.abertos_sem_dono);
+
+  /* ---------- onde se opera ---------- */
+  raiz.appendChild(nota(
+    d.endereco
+      ? "Para <b>abrir ou fechar</b>, use o sistema da rede: <b>" + esc(d.endereco) + "</b>. " +
+        "Ele roda dentro da empresa, onde o WinThor é alcançável — este painel é só de consulta."
+      : "Para <b>abrir ou fechar</b>, use o sistema da rede (o <code>servidor_margem.py</code>, " +
+        "na máquina do BI). Este painel é só de consulta.",
+    "info"));
+
+  /* ---------- o número que importa ---------- */
+  raiz.appendChild(heroi({
+    rotulo: "Produtos com a margem aberta agora",
+    valor: n(p.abertos_total),
+    formatar: fInt,
+    sub: "Leitura do WinThor de <b>" + fDataHora(p.carga) + "</b>. " +
+         "Aberto quer dizer <b>sem piso de margem</b>: o produto pode sair abaixo da margem naquela filial. " +
+         (n(p.abertos_sem_dono)
+            ? "<b>" + fInt(p.abertos_sem_dono) + "</b> deles foram abertos antes deste sistema e não têm responsável registrado."
+            : "Todos têm responsável registrado."),
+    kpis: porFilial.map(function (l) {
+      return {
+        rotulo: "Filial " + l[0],
+        numero: n(l[1]),
+        formatar: fInt,
+        tom: n(l[1]) ? "atencao" : "bom",
+        sub: n(l[1]) ? (n(l[2]) ? fInt(l[2]) + " sem dono" : "todos com dono") : "nada aberto"
+      };
+    })
+  }));
+
+  /* ---------- de quem é a responsabilidade ---------- */
+  var pr = painel("De quem é a responsabilidade",
+    "Quem abriu é quem fecha — essa é a regra, e o sistema da rede a aplica. " +
+    "Produto aberto antes deste sistema não tem dono: qualquer um pode fechar.");
+  pr.corpo.remove();
+  pr.appendChild(tabela({
+    id: "margem_responsaveis",
+    tituloCsv: "Responsáveis por produtos com margem aberta",
+    colunas: [
+      { titulo: "Quem abriu", tipo: "texto", valor: function (l) { return l[0]; },
+        celula: function (l) { return l[0]; }, destacar: true, fixa: 1 },
+      { titulo: "Produtos abertos", num: true, medida: true, tipo: "inteiro",
+        valor: function (l) { return n(l[1]); }, celula: function (l) { return fInt(l[1]); } },
+      { titulo: "Mais antigo", tipo: "texto", somar: false,
+        valor: function (l) { return l[2] || ""; },
+        celula: function (l) { return desdeQuando(l[2]); }, fraco: true }
+    ],
+    linhas: p.responsaveis || [],
+    medida: function (l) { return n(l[1]); }, medidaCor: "viz-1",
+    ordemInicial: 1, dirInicial: -1,
+    valorOrdem: function (l, i) { return [l[0], n(l[1]), l[2] || ""][i]; },
+    csv: true, porPagina: 10,
+    vazio: "Nada aberto."
+  }));
+  raiz.appendChild(pr);
+
+  /* ---------- uso no período ---------- */
+  var pu = painel("Quem mais usou, nos últimos " + n(p.dias) + " dias",
+    "Pedidos já concluídos. Um pedido pode envolver vários produtos e várias filiais.");
+  pu.corpo.remove();
+  pu.appendChild(tabela({
+    id: "margem_pessoas",
+    tituloCsv: "Uso da abertura de margem por pessoa",
+    colunas: [
+      { titulo: "Pessoa", tipo: "texto", valor: function (l) { return l[0]; },
+        celula: function (l) { return l[0]; }, destacar: true, fixa: 1 },
+      { titulo: "Aberturas", num: true, medida: true, tipo: "inteiro",
+        valor: function (l) { return n(l[1]); }, celula: function (l) { return fInt(l[1]); } },
+      { titulo: "Fechamentos", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[2]); }, celula: function (l) { return fInt(l[2]); } },
+      { titulo: "Produtos abertos", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[3]); }, celula: function (l) { return fInt(l[3]); } },
+      { titulo: "Produtos fechados", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[4]); }, celula: function (l) { return fInt(l[4]); } }
+    ],
+    linhas: p.por_pessoa || [],
+    medida: function (l) { return n(l[1]); }, medidaCor: "viz-1",
+    ordemInicial: 1, dirInicial: -1,
+    valorOrdem: function (l, i) { return [l[0], n(l[1]), n(l[2]), n(l[3]), n(l[4])][i]; },
+    csv: true, porPagina: 10,
+    vazio: "Ninguém usou o sistema no período."
+  }));
+  raiz.appendChild(pu);
+
+  var pfl = painel("Filiais que mais abriram",
+    "Um pedido feito em três filiais conta uma vez em cada.");
+  pfl.corpo.remove();
+  pfl.appendChild(tabela({
+    id: "margem_filiais",
+    tituloCsv: "Aberturas de margem por filial",
+    colunas: [
+      { titulo: "Filial", tipo: "texto", valor: function (l) { return "Filial " + l[0]; },
+        celula: function (l) { return "Filial " + l[0]; }, destacar: true, fixa: 1 },
+      { titulo: "Aberturas", num: true, medida: true, tipo: "inteiro",
+        valor: function (l) { return n(l[1]); }, celula: function (l) { return fInt(l[1]); } },
+      { titulo: "Fechamentos", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[2]); }, celula: function (l) { return fInt(l[2]); } }
+    ],
+    linhas: p.por_filial || [],
+    medida: function (l) { return n(l[1]); }, medidaCor: "viz-2",
+    ordemInicial: 1, dirInicial: -1,
+    valorOrdem: function (l, i) { return [l[0], n(l[1]), n(l[2])][i]; },
+    csv: true, porPagina: 10,
+    vazio: "Nenhum pedido no período."
+  }));
+  raiz.appendChild(pfl);
+
+  /* ---------- o que está aberto ---------- */
+  var pa = painel("O que está aberto agora",
+    "Direto do cadastro do WinThor: " + fInt(comDono) + " com responsável e " +
+    fInt(p.abertos_sem_dono) + " abertos antes deste sistema.");
+  pa.corpo.remove();
+  pa.appendChild(tabela({
+    id: "margem_abertos",
+    tituloCsv: "Produtos com a margem aberta",
+    colunas: [
+      { titulo: "Filial", tipo: "texto", valor: function (l) { return l[0]; },
+        celula: function (l) { return "Filial " + l[0]; }, fixa: 1 },
+      { titulo: "Cód", num: true, tipo: "inteiro", somar: false,
+        valor: function (l) { return l[1]; }, celula: function (l) { return l[1]; }, fraco: true },
+      { titulo: "Produto", tipo: "texto", valor: function (l) { return l[2] || ""; },
+        celula: function (l) { return l[2] || "—"; }, corta: true, destacar: true },
+      { titulo: "Quem abriu", tipo: "texto", valor: function (l) { return l[3] || ""; },
+        celula: function (l) {
+          return l[3] ? l[3] : el("span", "selo neutro", "antes do sistema");
+        }, destacar: true },
+      { titulo: "Desde", tipo: "data", valor: function (l) { return l[4] || ""; },
+        celula: function (l) { return l[4] ? fDataHora(l[4]) : "—"; } },
+      { titulo: "Há quanto tempo", tipo: "texto", somar: false,
+        valor: function (l) { return l[4] || ""; },
+        celula: function (l) { return desdeQuando(l[4]); }, fraco: true },
+      { titulo: "Motivo", tipo: "texto", valor: function (l) { return l[5] || ""; },
+        celula: function (l) { return l[5] || "—"; }, corta: true }
+    ],
+    linhas: abertos,
+    ordemInicial: 4, dirInicial: -1,
+    valorOrdem: function (l, i) { return [l[0], l[1], l[2] || "", l[3] || "", l[4] || "", l[4] || "", l[5] || ""][i]; },
+    csv: true, porPagina: 25,
+    vazio: "Nada aberto em nenhuma filial."
+  }));
+  raiz.appendChild(pa);
+
+  /* ---------- histórico ---------- */
+  var ph = painel("Histórico de pedidos",
+    "Os 60 últimos, com o motivo escrito por quem pediu.");
+  ph.corpo.remove();
+  ph.appendChild(tabela({
+    id: "margem_historico",
+    tituloCsv: "Histórico de abertura e fechamento de margem",
+    colunas: [
+      { titulo: "#", num: true, tipo: "inteiro", somar: false,
+        valor: function (l) { return l[0]; }, celula: function (l) { return l[0]; }, fraco: true, fixa: 1 },
+      { titulo: "Quando", tipo: "data", valor: function (l) { return l[1]; },
+        celula: function (l) { return fDataHora(l[1]); } },
+      { titulo: "Quem", tipo: "texto", valor: function (l) { return l[2]; },
+        celula: function (l) { return l[2]; }, destacar: true },
+      { titulo: "Ação", tipo: "texto", valor: function (l) { return l[4]; },
+        celula: function (l) {
+          return el("span", "selo " + (l[4] === "abrir" ? "atencao" : "bom"),
+                    l[4] === "abrir" ? "Abrir" : "Fechar" + (l[7] != null ? " " + l[7] + "%" : ""));
+        } },
+      { titulo: "Filiais", tipo: "texto", valor: function (l) { return (l[5] || []).join(","); },
+        celula: function (l) { return (l[5] || []).join(", "); } },
+      { titulo: "Produtos", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[6]); }, celula: function (l) { return fInt(l[6]); } },
+      { titulo: "Situação", tipo: "texto", valor: function (l) { return l[8]; },
+        celula: function (l) {
+          var tom = l[8] === "concluida" ? "bom" : l[8] === "erro" ? "grave" : "info";
+          return el("span", "selo " + tom, l[8]);
+        } },
+      { titulo: "Linhas", num: true, tipo: "inteiro",
+        valor: function (l) { return n(l[9]); }, celula: function (l) { return fInt(l[9]); } },
+      { titulo: "Motivo", tipo: "texto", valor: function (l) { return l[3]; },
+        celula: function (l) { return l[3]; }, corta: true },
+      { titulo: "Resultado", tipo: "texto", valor: function (l) { return l[10] || ""; },
+        celula: function (l) { return l[10] || "—"; }, corta: true, fraco: true }
+    ],
+    linhas: d.historico || [],
+    ordemInicial: 0, dirInicial: -1,
+    valorOrdem: function (l, i) {
+      return [l[0], l[1], l[2], l[4], (l[5] || []).join(","), n(l[6]), l[8], n(l[9]), l[3], l[10] || ""][i];
+    },
+    csv: true, porPagina: 25,
+    vazio: "Nenhum pedido ainda."
+  }));
+  raiz.appendChild(ph);
 }
 
 function buscarHistoricoMargem() {
   fetch("/api/margem", { headers: { Accept: "application/json" }, cache: "no-store" })
     .then(lerResposta)
     .then(function (r) {
-      OP.ativo = r.ativo;
-      OP.historico = r.historico || [];
+      OP.dados = r;
+      OP.erro = null;
       if (E.pagina === "operacao") desenhar(true);
       agendarAtualizacaoMargem();
     })
     .catch(function (e) {
-      OP.historico = [];
-      OP.erro = "Não consegui ler o histórico: " + e.message;
+      OP.dados = null;
+      OP.erro = (e && e.detalhe) ? e.detalhe : (e.message || String(e));
       if (E.pagina === "operacao") desenhar(true);
     });
 }
 
-/* Enquanto houver pedido na fila, a tela se atualiza sozinha — quem clicou
-   precisa ver o desfecho sem ficar apertando F5. */
+/* A foto do WinThor muda a cada carga do BI, e alguém pode estar abrindo
+   margem no sistema da rede agora. De cinco em cinco minutos basta. */
 function agendarAtualizacaoMargem() {
   if (OP_RELOGIO) { clearTimeout(OP_RELOGIO); OP_RELOGIO = null; }
-  var andando = (OP.historico || []).some(function (l) {
-    return l[8] === "pendente" || l[8] === "executando";
-  });
-  if (andando && E.pagina === "operacao") {
-    OP_RELOGIO = setTimeout(buscarHistoricoMargem, 12000);
-  }
-}
-
-function enviarPedidoMargem() {
-  var problema = validarPedido();
-  if (problema) { OP.erro = problema; desenhar(true); return; }
-  OP.enviando = true; OP.erro = null; desenhar(true);
-
-  fetch("/api/margem", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      acao: OP.acao,
-      filiais: Array.from(OP.filiais),
-      produtos: codigosDigitados(),
-      margem: OP.acao === "fechar" ? Number(OP.margem) : null,
-      solicitante: OP.nome,
-      motivo: OP.motivo
-    })
-  }).then(lerResposta).then(function (r) {
-    OP.enviando = false;
-    if (r && r.erro) { OP.erro = r.erro; desenhar(true); return; }
-    /* limpa só o que é do pedido; nome fica, motivo some */
-    OP.produtos = ""; OP.motivo = ""; OP.etapa = "formulario"; OP.historico = null;
-    desenhar(true);
-    buscarHistoricoMargem();
-  }).catch(function (e) {
-    OP.enviando = false;
-    OP.erro = (e && e.detalhe) ? e.detalhe : (e.message || String(e));
-    desenhar(true);
-  });
+  if (E.pagina === "operacao") OP_RELOGIO = setTimeout(buscarHistoricoMargem, 300000);
 }
 
 /* ---------------------------------------------------------------------------
