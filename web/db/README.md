@@ -41,6 +41,19 @@ do banco; o navegador só escolhe a faixa.
 Dimensão carrega por **upsert**, nunca `TRUNCATE`: um RCA que não vendeu nesta
 rodada não pode sumir do cadastro e deixar as devoluções dele sem nome.
 
+## A fila da margem
+
+| Tabela | O que guarda |
+|---|---|
+| `comercial.margem_solicitacao` | o pedido: quem, quando, por quê, ação, filiais, produtos e o que aconteceu |
+| `comercial.margem_alteracao` | o valor **anterior** de cada produto, gravado antes de mudar |
+
+`margem_registrar(...)` valida e enfileira — toda regra mora no banco, não na
+tela: tela é conveniência. `margem_historico(n)` alimenta o painel.
+
+Quem executa é o `etl/agente_margem.py`, que roda dentro da rede: o Oracle do
+WinThor não é alcançável da Vercel. É o mesmo motivo de a fila existir.
+
 ## Views materializadas
 
 Atualizadas pelo ETL logo depois da carga (`sync_bi_comercial.py`, lista

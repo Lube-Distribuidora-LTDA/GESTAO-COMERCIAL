@@ -44,11 +44,12 @@ $ErrorActionPreference = "Stop"
 $ARQUIVOS = @(
     "bi_comum.py", "consultas_comercial.py", "sync_bi_comercial.py",
     "diagnostico_bi_comercial.py", "executar.py", "_teste_agendador.py",
-    "requirements.txt", "ENV"
+    "agente_margem.py", "requirements.txt", "ENV"
 )
 
 $NOME_RAPIDAS = "BI Comercial - Sync rapidas"
 $NOME_PESADAS = "BI Comercial - Sync margem"
+$NOME_MARGEM  = "BI Comercial - Agente de margem"
 $NOME_COBAIA  = "BI Comercial - teste de agendamento"
 
 function Pausar {
@@ -260,6 +261,36 @@ try {
         }
     }
 
+    # --- tarefa que se repete durante o dia inteiro -------------------------
+    # O agente de margem precisa acordar de minuto em minuto: quem pediu para
+    # abrir a margem no painel esta esperando para faturar. O Agendador nao tem
+    # "a cada 1 minuto" direto - monta-se a repeticao em cima de um gatilho.
+    function RegistrarRepetida {
+        param($Nome, $Argumento, $Minutos, $Descricao, $Modo)
+
+        $acao = New-ScheduledTaskAction -Execute $pythonw -Argument $Argumento -WorkingDirectory $Destino
+        $gatilho = New-ScheduledTaskTrigger -Daily -At (Get-Date "00:00")
+        $repete  = New-ScheduledTaskTrigger -Once -At (Get-Date "00:00") `
+                     -RepetitionInterval (New-TimeSpan -Minutes $Minutos) `
+                     -RepetitionDuration (New-TimeSpan -Hours 23 -Minutes 59)
+        $gatilho.Repetition = $repete.Repetition
+
+        $configLeve = New-ScheduledTaskSettingsSet `
+            -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -ExecutionTimeLimit (New-TimeSpan -Minutes 20) `
+            -MultipleInstances IgnoreNew -Hidden
+
+        if ($Modo -eq "Senha") {
+            Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilho `
+                -Settings $configLeve -User $Usuario -Password $senha `
+                -Description $Descricao -Force | Out-Null
+        } else {
+            $p = New-ScheduledTaskPrincipal -UserId $Usuario -LogonType $Modo -RunLevel Limited
+            Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilho `
+                -Settings $configLeve -Principal $p -Description $Descricao -Force | Out-Null
+        }
+    }
+
     # --- a cobaia: prova se o modo realmente dispara um processo ------------
     $marca = Join-Path $Destino "_teste_agendador.txt"
 
@@ -359,6 +390,13 @@ try {
         -Descricao "BI Comercial: margem por item (3,3 milhoes de linhas) e views do painel."
     Write-Host "  [ok] $NOME_PESADAS" -ForegroundColor Green
 
+    # o agente de margem le a fila do painel de minuto em minuto
+    RegistrarRepetida -Nome $NOME_MARGEM `
+        -Argumento ('"' + $bootstrap + '" --alvo agente_margem.py --servir') `
+        -Minutos 1 -Modo $modoBom.nome `
+        -Descricao "BI Comercial: executa no WinThor os pedidos de abrir/fechar margem feitos no painel."
+    Write-Host "  [ok] $NOME_MARGEM (a cada 1 minuto)" -ForegroundColor Green
+
     # --- carga de teste de verdade -----------------------------------------
     $log   = Join-Path $Destino "sync_bi_comercial.log"
     $falha = Join-Path $Destino "falha_inicial.log"
@@ -416,6 +454,7 @@ try {
     Write-Host "  modo                : $($modoBom.texto)"
     Write-Host "  consultas rapidas   : $($horariosRapidas -join ', ')"
     Write-Host "  margem por item     : $($horariosPesadas -join ', ')"
+    Write-Host "  agente de margem    : a cada 1 minuto"
     Write-Host "  pasta de execucao   : $Destino"
     Write-Host "================================================================" -ForegroundColor Cyan
     if ($modoBom.nome -eq "Interactive") {

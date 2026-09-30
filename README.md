@@ -291,6 +291,66 @@ hora** — README que diz ser restrito quando está aberto é pior que nenhum.
 
 ---
 
+## Abrir e fechar a margem das filiais
+
+A quinta página do painel (**Operação › Margem das filiais**) substitui oito
+arquivos `.bat` que ficavam em `Z:\Alexandre TI\BATS`: quatro punham
+`PCPRODFILIAL.PERCMARGEMMIN = 5` e quatro punham `NULL`, um par por filial.
+
+- **Abrir** tira o piso de margem: o produto passa a poder ser vendido abaixo da
+  margem naquela filial.
+- **Fechar** devolve o piso (o padrão da casa é 5%, mas o valor vai no pedido).
+
+### Por que é uma fila, e não um comando direto
+
+O painel roda na Vercel; o Oracle do WinThor vive em `192.168.0.5`, dentro da
+rede, e não é alcançável de fora. Então:
+
+```
+painel (Vercel) ──grava o pedido──► comercial.margem_solicitacao (Supabase)
+                                              │
+                          agente_margem.py ───┘ lê de minuto em minuto,
+                          (na máquina do ETL)   executa no WinThor e grava
+                                                o resultado de volta
+```
+
+Quem está na tela vê o pedido passar por **na fila → concluído** (ou **erro**,
+com o motivo escrito). Enquanto houver pedido andando, a tela se atualiza
+sozinha.
+
+### O que os `.bat` não davam, e agora existe
+
+| | `.bat` | painel |
+|---|---|---|
+| Quem pediu, quando e por quê | nada | obrigatório, e fica no histórico |
+| Valor anterior de cada produto | perdido | gravado em `comercial.margem_alteracao` |
+| Quantas linhas mudaram | não dizia | registrado por pedido |
+| Montagem do SQL | texto concatenado com o que foi digitado | *bind*, sempre |
+| Senha do WinThor | escrita dentro do arquivo, numa pasta de rede | no `ENV` da máquina |
+| Rodar em várias filiais | um arquivo por filial | uma caixa de seleção |
+
+### Ligando
+
+1. No `ENV` da máquina do ETL, `ORACLE_USER_ESCRITA` e `ORACLE_PASSWORD_ESCRITA`
+   — um usuário com `UPDATE` em `PCPRODFILIAL`. O usuário do ETL é de leitura e
+   continua sendo. Sem isso, o pedido fica com status **erro** e a mensagem
+   dizendo o que falta.
+2. `instalar_e_agendar.ps1` (de novo), que cria a tarefa **BI Comercial -
+   Agente de margem**, de 1 em 1 minuto.
+3. Na Vercel: **primeiro** ligue a proteção de acesso do painel, **depois** crie
+   `MARGEM_ATIVA=sim`. Sem essa variável o `POST /api/margem` responde 423 e
+   explica o porquê: enquanto o painel estiver aberto para quem tiver o link, um
+   botão que muda o cadastro de produto não pode ficar ao alcance de qualquer um.
+
+### Para a TI, sem abrir o painel
+
+```
+python agente_margem.py --acao abrir --filiais 1 7 --produtos 1234 5678 \
+       --nome "Julio" --motivo "liberacao para a campanha de outubro" --agora
+```
+
+Passa pela mesma fila e pelo mesmo registro: nada acontece sem nome e motivo.
+
 ## As consultas
 
 | Página do Power BI | Consulta | Tabela no Supabase | Linhas (ref.) |

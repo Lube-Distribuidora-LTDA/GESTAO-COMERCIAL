@@ -19,8 +19,16 @@ import sys
 import datetime
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
-ALVO = os.path.join(PASTA, "sync_bi_comercial.py")
 FALHA = os.path.join(PASTA, "falha_inicial.log")
+
+# Por padrao ele inicia a carga; com "--alvo <arquivo>" inicia outro script da
+# mesma pasta (e assim que o agente de margem roda pelo agendador, ganhando a
+# mesma protecao contra falha silenciosa).
+_ALVO_PADRAO = "sync_bi_comercial.py"
+if len(sys.argv) > 2 and sys.argv[1] == "--alvo":
+    _ALVO_PADRAO = sys.argv[2]
+    del sys.argv[1:3]
+ALVO = os.path.join(PASTA, _ALVO_PADRAO)
 
 
 def _registrar_falha(texto: str) -> None:
@@ -49,7 +57,7 @@ def main() -> int:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
     if not os.path.isfile(ALVO):
-        _registrar_falha("Nao encontrei o sync_bi_comercial.py em " + PASTA)
+        _registrar_falha("Nao encontrei o " + os.path.basename(ALVO) + " em " + PASTA)
         return 2
 
     # A pasta do script precisa estar no path de import, porque o

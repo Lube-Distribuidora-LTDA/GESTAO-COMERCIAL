@@ -34,7 +34,7 @@ Write-Host ""
 Write-Host "==================== TAREFAS AGENDADAS ====================" -ForegroundColor Cyan
 Write-Host "Pasta: $pasta"
 
-$nomes = @("BI Comercial - Sync rapidas", "BI Comercial - Sync margem")
+$nomes = @("BI Comercial - Sync rapidas", "BI Comercial - Sync margem", "BI Comercial - Agente de margem")
 $achou = $false
 
 foreach ($nome in $nomes) {
