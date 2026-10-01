@@ -65,10 +65,16 @@ from urllib.parse import parse_qs, urlparse
 
 import psycopg2.extras
 
-import agente_margem as agente
 import bi_comum as bi
 
+# O log e ligado ANTES de importar o agente, de proposito: quem configura
+# primeiro define o arquivo, e o que este processo escreve tem que cair no
+# servidor_margem.log — e nele que alguem vai procurar quando a pagina nao
+# abrir. O agente_margem tambem chama configurar_log ao ser importado, mas a
+# essa altura ja esta tudo de pe e ele so avisa onde o log esta saindo.
 log = bi.configurar_log("servidor_margem.log")
+
+import agente_margem as agente  # noqa: E402 — depois do log, de proposito
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
 PAGINA = os.path.join(PASTA, "painel_margem.html")

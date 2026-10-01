@@ -11,6 +11,17 @@ maquina continua com a versao antiga.
 
 
 ---------------------------------------------------------------------------
+ CONFERIR SERVIDOR.bat  (na raiz)
+---------------------------------------------------------------------------
+ Rode na maquina onde o sistema de margem deveria estar no ar. Em uma tela
+ so ele diz: se a tarefa existe, se esta rodando, se a porta esta liberada,
+ se o servidor responde, e qual endereco passar para o comercial.
+
+ Nao muda nada - so olha e conta. E o primeiro lugar a ir quando alguem
+ disser que a pagina nao abre.
+
+
+---------------------------------------------------------------------------
  1 - CONFIGURACAO
 ---------------------------------------------------------------------------
  E A UNICA PASTA QUE VOCE PRECISA EDITAR.

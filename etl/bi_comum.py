@@ -65,6 +65,22 @@ def configurar_log(nome_arquivo: str) -> logging.Logger:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
     caminho = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), nome_arquivo)
+
+    # Quando um programa importa outro (o servidor_margem importa o
+    # agente_margem, e os dois chamam esta funcao), o logging ja esta de pe na
+    # segunda chamada e o basicConfig nao faz nada. So que o FileHandler do
+    # argumento E criado antes de ser descartado — e deixa para tras um arquivo
+    # de log VAZIO, com o nome certo e nada dentro. Quem for procurar o que
+    # aconteceu abre esse, ve o vazio e conclui que o programa nem rodou.
+    # Entao: se ja esta configurado, nao cria arquivo nenhum; diz onde o log
+    # realmente esta saindo e pronto.
+    if logging.getLogger().handlers:
+        atual = next((h.baseFilename for h in logging.getLogger().handlers
+                      if isinstance(h, logging.FileHandler)), None)
+        if atual and os.path.abspath(atual) != os.path.abspath(caminho):
+            log.info("Log deste processo continua em: %s", atual)
+        return log
+
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(message)s",
