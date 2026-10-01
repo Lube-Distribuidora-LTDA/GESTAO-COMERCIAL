@@ -353,9 +353,20 @@ try {
         param($Nome, $Argumento, $Descricao, $Modo)
 
         $acao = New-ScheduledTaskAction -Execute $pythonw -Argument $Argumento -WorkingDirectory $Destino
+        # Tres gatilhos, e o terceiro e o que importa: de meia em meia hora o
+        # Agendador tenta subir o servidor de novo. Se ele ja estiver no ar,
+        # "IgnoreNew" descarta a tentativa e nada acontece; se tiver caido por
+        # qualquer motivo, ele volta em no maximo 30 minutos sem ninguem mexer.
+        # Isso existe porque "reiniciar N vezes" nao basta: em 01/10/2026 o
+        # banco ficou fora 15 minutos, as 5 tentativas se esgotaram em 10, e o
+        # sistema passou a manha fora do ar.
+        $repete = New-ScheduledTaskTrigger -Once -At (Get-Date "00:00") `
+                    -RepetitionInterval (New-TimeSpan -Minutes 30) `
+                    -RepetitionDuration (New-TimeSpan -Hours 23 -Minutes 59)
         $gatilhos = @(
             (New-ScheduledTaskTrigger -AtStartup),
-            (New-ScheduledTaskTrigger -AtLogOn -User $Usuario)
+            (New-ScheduledTaskTrigger -AtLogOn -User $Usuario),
+            $repete
         )
         $configServidor = New-ScheduledTaskSettingsSet `
             -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `

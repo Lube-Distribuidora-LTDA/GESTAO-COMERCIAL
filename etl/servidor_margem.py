@@ -356,7 +356,23 @@ def main() -> int:
     bi.carregar_env()
     bi.definir_schema("comercial")
 
-    pg()  # falha agora, e nao na cara de quem abrir a pagina
+    # Abrir a conexao agora serve para achar erro de configuracao cedo (ENV
+    # errado, senha trocada) em vez de descobrir quando alguem abrir a pagina.
+    # Mas uma falha aqui NAO pode derrubar o servidor: em 01/10/2026 o Supabase
+    # ficou fora do ar por uns 15 minutos as 08:17, o servidor morreu na
+    # partida, as tentativas de reinicio se esgotaram, e o sistema passou a
+    # manha inteira fora do ar por causa de uma piscada do banco.
+    # Agora ele sobe de qualquer jeito: quem abrir a pagina ve o erro escrito,
+    # e a proxima consulta reabre a conexao sozinha, sem ninguem precisar
+    # reiniciar nada.
+    try:
+        pg()
+    except Exception as exc:  # noqa: BLE001 — banco fora do ar nao e motivo para nao subir
+        log.warning("Subindo SEM conexao com o banco (%s: %s). "
+                    "A pagina vai mostrar o erro ate o banco voltar, e a "
+                    "primeira consulta que der certo restabelece sozinha.",
+                    type(exc).__name__, str(exc)[:200])
+
     pessoas = pessoas_permitidas()
 
     servidor = ThreadingHTTPServer((args.host, args.porta), Manipulador)
