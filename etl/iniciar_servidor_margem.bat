@@ -15,6 +15,28 @@ rem ===========================================================================
 setlocal
 cd /d "%~dp0"
 
+rem Na pasta de rede este arquivo fica numa subpasta, longe dos outros scripts.
+rem O programa so roda onde esta instalado de verdade, porque precisa dos
+rem vizinhos (agente_margem.py, bi_comum.py) e do ENV. Entao: se os vizinhos
+rem nao estiverem aqui, vai para a instalacao.
+if not exist "bi_comum.py" (
+    if exist "C:\BI\COMERCIAL\servidor_margem.py" (
+        echo.
+        echo   Rodando a partir da instalacao em C:\BI\COMERCIAL
+        cd /d "C:\BI\COMERCIAL"
+    ) else (
+        echo.
+        echo   Nao achei a instalacao em C:\BI\COMERCIAL.
+        echo.
+        echo   Este atalho so funciona na maquina onde o BI esta instalado.
+        echo   Se e esta a maquina, rode antes o "INSTALAR TUDO.bat" que esta
+        echo   na raiz da pasta de rede.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
 echo.
 echo   Abertura de margem - Lube Distribuidora
 echo   ---------------------------------------

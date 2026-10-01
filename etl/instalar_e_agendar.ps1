@@ -1,5 +1,6 @@
 ﻿param(
     [switch]$JaElevado,
+    [switch]$Conferir,
     [string]$Origem,
     [string]$Destino = "C:\BI\COMERCIAL",
     [string]$Usuario
@@ -11,8 +12,14 @@
 # que alimentam o painel, sem abrir janela nenhuma na hora de rodar.
 #
 # Como rodar (uma vez so):
-#   cd "P:\INTEGRACAO BI\COMERCIAL"
-#   powershell -ExecutionPolicy Bypass -File .\instalar_e_agendar.ps1
+#   abra P:\INTEGRACAO BI\COMERCIAL e de duplo clique em "INSTALAR TUDO.bat"
+#
+# A PASTA DE REDE E ORGANIZADA EM SUBPASTAS, A INSTALACAO E PLANA
+# Na rede os arquivos ficam separados por assunto, para quem abre a pasta
+# entender o que e cada coisa. Na maquina eles sao copiados todos juntos em
+# C:\BI\COMERCIAL, porque os scripts se chamam entre si (servidor_margem.py
+# importa agente_margem.py, que importa bi_comum.py) e o Python procura o
+# vizinho na mesma pasta. Separar lá quebraria tudo; separar aqui ajuda.
 #
 # QUAL CONTA VAI RODAR A TAREFA
 # Este script roda em duas partes: a primeira na sua janela normal, a segunda
@@ -41,11 +48,21 @@
 
 $ErrorActionPreference = "Stop"
 
+# Caminho de cada arquivo DENTRO da pasta de rede. Na maquina todos caem
+# juntos em $Destino, sem subpasta.
 $ARQUIVOS = @(
-    "bi_comum.py", "consultas_comercial.py", "sync_bi_comercial.py",
-    "diagnostico_bi_comercial.py", "executar.py", "_teste_agendador.py",
-    "agente_margem.py", "servidor_margem.py", "painel_margem.html",
-    "iniciar_servidor_margem.bat", "requirements.txt", "ENV"
+    "1 - CONFIGURACAO\ENV",
+    "2 - SISTEMA COMERCIAL\bi_comum.py",
+    "2 - SISTEMA COMERCIAL\consultas_comercial.py",
+    "2 - SISTEMA COMERCIAL\sync_bi_comercial.py",
+    "2 - SISTEMA COMERCIAL\diagnostico_bi_comercial.py",
+    "2 - SISTEMA COMERCIAL\executar.py",
+    "2 - SISTEMA COMERCIAL\_teste_agendador.py",
+    "2 - SISTEMA COMERCIAL\requirements.txt",
+    "3 - PAINEL DE ABERTURA DE MARGEM\servidor_margem.py",
+    "3 - PAINEL DE ABERTURA DE MARGEM\painel_margem.html",
+    "3 - PAINEL DE ABERTURA DE MARGEM\agente_margem.py",
+    "3 - PAINEL DE ABERTURA DE MARGEM\iniciar_servidor_margem.bat"
 )
 
 $NOME_RAPIDAS = "BI Comercial - Sync rapidas"
@@ -91,7 +108,18 @@ $ehAdmin = (New-Object Security.Principal.WindowsPrincipal($identidade)).IsInRol
 
 if (-not $JaElevado) {
 
-    if (-not $Origem) { $Origem = $pastaLocal }
+    # Este script mora em "4 - INSTALACAO", entao a raiz da caixa e a pasta de
+    # cima. Procurando pela subpasta de configuracao em vez de subir um nivel no
+    # escuro, ele funciona tanto chamado de dentro quanto da raiz.
+    if (-not $Origem) {
+        $Origem = $pastaLocal
+        foreach ($candidata in @($pastaLocal, (Split-Path -Parent $pastaLocal))) {
+            if ($candidata -and (Test-Path -LiteralPath (Join-Path $candidata "1 - CONFIGURACAO"))) {
+                $Origem = $candidata
+                break
+            }
+        }
+    }
     $Usuario = "$env:USERDOMAIN\$env:USERNAME"
 
     Write-Host ""
@@ -108,8 +136,30 @@ if (-not $JaElevado) {
     foreach ($a in $ARQUIVOS) {
         if (-not (Test-Path -LiteralPath (Join-Path $Origem $a))) { $faltando += $a }
     }
-    if ($faltando -contains "ENV") {
-        throw "Nao encontrei o arquivo ENV em $Origem. Ele guarda as credenciais e e obrigatorio."
+
+    # -Conferir: diz se esta tudo no lugar e para por aqui. Serve para checar a
+    # pasta depois de mexer nela, sem tocar na maquina nem no Agendador.
+    if ($Conferir) {
+        Write-Host "CONFERINDO A PASTA (nada vai ser instalado)" -ForegroundColor Cyan
+        Write-Host ""
+        foreach ($a in $ARQUIVOS) {
+            $existe = Test-Path -LiteralPath (Join-Path $Origem $a)
+            $marca = if ($existe) { "  ok   " } else { " FALTA " }
+            $cor = if ($existe) { "Green" } else { "Red" }
+            Write-Host ($marca + $a) -ForegroundColor $cor
+        }
+        Write-Host ""
+        if ($faltando.Count -eq 0) {
+            Write-Host "Esta tudo no lugar. Pode rodar o INSTALAR TUDO.bat." -ForegroundColor Green
+        } else {
+            Write-Host ("Faltam " + $faltando.Count + " arquivo(s) - veja as linhas em vermelho.") -ForegroundColor Red
+        }
+        Pausar
+        return
+    }
+    if ($faltando -contains "1 - CONFIGURACAO\ENV") {
+        throw ("Nao encontrei o arquivo ENV em " + (Join-Path $Origem "1 - CONFIGURACAO") +
+               ". Ele guarda as credenciais e e obrigatorio - comece pelo ENV.example que esta ao lado.")
     }
     if ($faltando.Count -gt 0) {
         throw ("Faltam arquivos em ${Origem}: " + ($faltando -join ", "))
@@ -117,8 +167,9 @@ if (-not $JaElevado) {
 
     New-Item -ItemType Directory -Force -Path $Destino | Out-Null
     foreach ($a in $ARQUIVOS) {
-        Copy-Item -LiteralPath (Join-Path $Origem $a) -Destination (Join-Path $Destino $a) -Force
-        Write-Host ("  copiado  " + $a) -ForegroundColor Green
+        $nome = Split-Path -Leaf $a
+        Copy-Item -LiteralPath (Join-Path $Origem $a) -Destination (Join-Path $Destino $nome) -Force
+        Write-Host ("  copiado  " + $nome) -ForegroundColor Green
     }
     Write-Host ""
     Write-Host "ETL instalado em $Destino" -ForegroundColor Green

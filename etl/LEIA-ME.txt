@@ -1,0 +1,98 @@
+===========================================================================
+ BI COMERCIAL - Lube Distribuidora
+ O que e cada pasta daqui
+===========================================================================
+
+Esta pasta e a CAIXA: e daqui que o instalador leva tudo para a maquina que
+roda de verdade (C:\BI\COMERCIAL, na VM).
+
+Mexeu em alguma coisa aqui? Rode o "INSTALAR TUDO.bat" de novo, senao a
+maquina continua com a versao antiga.
+
+
+---------------------------------------------------------------------------
+ 1 - CONFIGURACAO
+---------------------------------------------------------------------------
+ E A UNICA PASTA QUE VOCE PRECISA EDITAR.
+
+ ENV ............... as senhas e enderecos. Oracle do WinThor, Supabase, e o
+                     usuario de escrita da abertura de margem.
+ ENV.example ....... o mesmo arquivo, sem senha nenhuma, explicando linha por
+                     linha o que cada uma faz. Use de consulta.
+
+ ATENCAO: edite o ENV AQUI, nao o da VM. O instalador copia este por cima
+ daquele - uma edicao feita so na VM se perde na proxima instalacao.
+
+
+---------------------------------------------------------------------------
+ 2 - SISTEMA COMERCIAL
+---------------------------------------------------------------------------
+ O BI: le o WinThor e alimenta o painel da internet (comissao por RCA,
+ margem por item, pedidos em aberto, devolucoes).
+
+ Roda sozinho 8 vezes por dia pelo Agendador de Tarefas. Voce nao precisa
+ abrir nada disto no dia a dia.
+
+ sync_bi_comercial.py ......... o programa principal: busca no Oracle e grava
+                                no Supabase.
+ consultas_comercial.py ....... as consultas SQL, uma por assunto. E aqui que
+                                mora a regra da comissao.
+ bi_comum.py .................. as pecas que os dois BIs usam: conexao,
+                                carga, log, controle.
+ diagnostico_bi_comercial.py .. roda sem gravar nada e diz se esta tudo de pe.
+                                Use quando desconfiar de alguma coisa.
+ executar.py .................. quem o Agendador chama; existe para que uma
+                                falha logo no inicio nao passe em silencio.
+ _teste_agendador.py .......... tarefa-cobaia do instalador. Nao use na mao.
+ requirements.txt ............. a lista de bibliotecas do Python.
+
+
+---------------------------------------------------------------------------
+ 3 - PAINEL DE ABERTURA DE MARGEM
+---------------------------------------------------------------------------
+ O sistema que o comercial abre no navegador para tirar e devolver o piso de
+ margem dos produtos, por filial. Substituiu os oito .bat que ficavam em
+ Z:\Alexandre TI\BATS.
+
+ Endereco: http://<maquina-do-BI>:8080
+ Sobe sozinho quando a maquina liga.
+
+ servidor_margem.py ........... o programa que fica no ar servindo a pagina e
+                                executando no WinThor.
+ painel_margem.html ........... a pagina em si: o formulario e o painel de uso.
+ agente_margem.py ............. a rede de seguranca: se um pedido for
+                                registrado e a execucao falhar no meio, ele
+                                termina o servico.
+ iniciar_servidor_margem.bat .. sobe o servidor na mao, numa janela, para
+                                voce ver o que esta acontecendo.
+
+ REGRA: quem abriu e quem fecha. Sem excecao. Quem ja estava aberto antes
+ deste sistema nao tem dono registrado, e ai qualquer um fecha.
+
+
+---------------------------------------------------------------------------
+ 4 - INSTALACAO
+---------------------------------------------------------------------------
+ instalar_e_agendar.ps1 ....... copia tudo para a VM e cria as tarefas
+                                agendadas. E o que o "INSTALAR TUDO.bat" da
+                                raiz chama.
+ verificar_agendamento.ps1 .... mostra as tarefas criadas, quando rodaram pela
+                                ultima vez e se deu certo.
+
+
+---------------------------------------------------------------------------
+ 5 - SAIDAS ANTIGAS
+---------------------------------------------------------------------------
+ Relatorios e registros das primeiras instalacoes, guardados caso precise
+ conferir alguma coisa de como foi. Nao servem para mais nada no dia a dia -
+ pode apagar quando quiser.
+
+
+===========================================================================
+ POR QUE A VM FICA TUDO JUNTO E AQUI FICA SEPARADO
+===========================================================================
+ Os programas se chamam entre si: o servidor_margem.py usa o agente_margem.py,
+ que usa o bi_comum.py. O Python procura esse vizinho na MESMA pasta. Por isso
+ a instalacao em C:\BI\COMERCIAL e plana.
+
+ Aqui a separacao e para gente, nao para maquina.

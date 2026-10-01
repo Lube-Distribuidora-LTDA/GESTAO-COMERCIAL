@@ -291,6 +291,37 @@ hora** — README que diz ser restrito quando está aberto é pior que nenhum.
 
 ---
 
+## A pasta de rede, e como instalar
+
+`P:\INTEGRACAO BI\COMERCIAL` e a **caixa**: e de la que o instalador leva tudo
+para a maquina que roda de verdade (`C:\BI\COMERCIAL`, na VM). Ela e organizada
+por assunto, para quem abre a pasta entender o que e cada coisa:
+
+```
+COMERCIAL\
+├── LEIA-ME.txt                       o que e cada pasta, em portugues
+├── INSTALAR TUDO.bat                 duplo clique: instala e agenda
+├── 1 - CONFIGURACAO\                 ENV e ENV.example  <- o unico que se edita
+├── 2 - SISTEMA COMERCIAL\            o ETL que alimenta o painel
+├── 3 - PAINEL DE ABERTURA DE MARGEM\ o sistema local da margem
+├── 4 - INSTALACAO\                   os dois .ps1
+└── 5 - SAIDAS ANTIGAS\               relatorios das primeiras instalacoes
+```
+
+**A instalacao na VM e plana, de proposito.** Os scripts se chamam entre si
+(`servidor_margem.py` usa `agente_margem.py`, que usa `bi_comum.py`) e o Python
+procura o vizinho na mesma pasta. Separar la quebraria; separar na rede ajuda
+quem precisa achar as coisas.
+
+**O ENV a editar e o da rede**, nao o da VM: o instalador copia um por cima do
+outro, e uma edicao feita so na VM se perde na proxima instalacao.
+
+Para conferir a pasta sem instalar nada:
+
+```
+powershell -ExecutionPolicy Bypass -File "4 - INSTALACAO\instalar_e_agendar.ps1" -Conferir
+```
+
 ## Abrir e fechar a margem das filiais
 
 Um sistema separado, que roda **dentro da rede**, substitui oito arquivos `.bat`
