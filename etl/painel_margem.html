@@ -426,7 +426,28 @@ $$(".aba").forEach((b) => b.addEventListener("click", () => {
 /* ======================================================================
    Carregar o estado
    ====================================================================== */
+/* Aberta com duplo clique, do disco ou da pasta de rede, a pagina desenha
+   inteira e nao alcanca nada: o navegador nao deixa um arquivo local falar com
+   o banco. E a MESMA limitacao que fez este sistema precisar de um programa
+   servindo a pagina. Como o sintoma ("Failed to fetch") nao diz nada disso,
+   a tela diz. */
+function abertaDoDisco() {
+  return location.protocol === "file:";
+}
+
 async function carregar() {
+  if (abertaDoDisco()) {
+    avisar("#falha", "atencao",
+      "<b>Esta página foi aberta direto do arquivo, e assim ela não funciona.</b><br>" +
+      "Um arquivo aberto do disco não consegue falar com o banco nem com o WinThor — " +
+      "o navegador impede, e é por isso que este sistema existe como um programa.<br><br>" +
+      "Abra pelo endereço, no navegador: <b>http://&lt;máquina-do-BI&gt;:8080</b><br>" +
+      "<span style='opacity:.8'>O endereço exato está escrito no começo do " +
+      "<code>servidor_margem.log</code>, na pasta <code>C:\\BI\\COMERCIAL</code> da máquina " +
+      "onde o BI está instalado.</span>");
+    $("#carimbo").textContent = "Sem dados — a página precisa ser aberta pelo endereço.";
+    return;
+  }
   try {
     DADOS = await chamar("/api/estado?dias=90");
     avisar("#falha", "erro", "");
@@ -440,8 +461,17 @@ async function carregar() {
       " · a foto é atualizada a cada carga do BI.";
     $("#rodape-maquina").textContent = "Servidor: " + DADOS.maquina;
   } catch (e) {
+    /* "Failed to fetch" nao e erro de HTTP: e a conexao que nem chegou a sair.
+       As duas causas de sempre sao o servidor parado e o firewall barrando a
+       porta - vale dizer as duas, em vez de so a primeira. */
+    var naoSaiu = /failed to fetch|networkerror|load failed/i.test(e.message || "");
     avisar("#falha", "erro", "<b>Não consegui falar com o servidor.</b> " + esc(e.message) +
-      "<br>Confira se o <code>servidor_margem.py</code> continua rodando na máquina do BI.");
+      (naoSaiu
+        ? "<br>Duas causas possíveis:<ul>" +
+          "<li>o <code>servidor_margem.py</code> parou na máquina do BI — a tarefa " +
+          "<b>BI Comercial - Servidor de margem</b> mostra se ele está de pé;</li>" +
+          "<li>o firewall da máquina está barrando a porta 8080.</li></ul>"
+        : "<br>Confira se o <code>servidor_margem.py</code> continua rodando na máquina do BI."));
   }
 }
 
