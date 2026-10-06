@@ -220,6 +220,7 @@ Site estático mais duas funções serverless, sem framework.
 | `api/detalhe.js` | `/api/detalhe?tipo=…` → `comercial.painel_detalhe()`, para as listas grandes. |
 | `api/_db.js` | A conexão com o banco, compartilhada pelas duas rotas. |
 | `db/` | Os objetos de banco e por que existem. |
+| `middleware.ts` + `sentinela-guarda.ts` | O guarda da Sentinela Lube, na porta de toda requisição. Ver [Acesso](#acesso). |
 
 O navegador **nunca** fala com o banco: ele chama `/api/dados`, e é a função, no
 servidor da Vercel, que consulta o Supabase com credencial de variável de
@@ -283,11 +284,28 @@ bloqueasse o domínio.
 
 ### Acesso
 
-Este painel mostra **comissão de vendedor**, nome a nome. Diferente do painel de
-Compras, ele nasce com a proteção da Vercel **ligada** (*Settings › Deployment
-Protection › Vercel Authentication*): só quem tem conta no time da Lube abre o
-link. Se um dia essa proteção for desligada, **atualize este README na mesma
-hora** — README que diz ser restrito quando está aberto é pior que nenhum.
+Este painel mostra **comissão de vendedor**, nome a nome. Ele é protegido pela
+**Sentinela Lube** (desde 2026-10-06): só entra quem tem login no **Painel Lube**
+com permissão para este sistema (slug `gestao-comercial`). Quem não tem é mandado
+para a tela de login do portal (`painel-lube-distribuidora.vercel.app`); as rotas
+`/api/*` respondem `401` em vez de entregar os dados. Nenhuma rota fica aberta para
+quem não tem login.
+
+O guarda mora em `web/middleware.ts` + `web/sentinela-guarda.ts` (Routing
+Middleware da Vercel; o núcleo é cópia de `guarda/` do repositório do Painel Lube).
+Em `web/middleware.ts`, `FECHADO = { projeto: 'gestao-comercial-web', slug:
+'gestao-comercial' }`: se a lista da central da Sentinela não vier (partida a frio,
+central fora), só passa quem tem sessão válida. Com a lista, quem manda é a coluna
+`exige_login` de `sentinela.sistemas` (Supabase do Painel Lube) — **na instalação ela
+ficou `false`, então o endereço principal continua abrindo para qualquer um até o TI
+ligá-la** no painel da Sentinela. `https://<endereço>/.sentinela/saude` mostra se o
+guarda está de pé (`oidc: true`, `lista.ok: true`).
+
+A proteção da Vercel (*Settings › Deployment Protection › Vercel Authentication*,
+modo Standard) continua ligada, mas cobre só os endereços de deploy e de branch, **não**
+o endereço principal `gestao-comercial-web-three.vercel.app`. Quem segura o endereço
+principal é a Sentinela. Se a proteção mudar, **atualize este README na mesma hora** —
+README que diz ser restrito quando está aberto é pior que nenhum.
 
 ---
 
