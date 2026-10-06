@@ -296,9 +296,9 @@ Middleware da Vercel; o núcleo é cópia de `guarda/` do repositório do Painel
 Em `web/middleware.ts`, `FECHADO = { projeto: 'gestao-comercial-web', slug:
 'gestao-comercial' }`: se a lista da central da Sentinela não vier (partida a frio,
 central fora), só passa quem tem sessão válida. Com a lista, quem manda é a coluna
-`exige_login` de `sentinela.sistemas` (Supabase do Painel Lube) — **na instalação ela
-ficou `false`, então o endereço principal continua abrindo para qualquer um até o TI
-ligá-la** no painel da Sentinela. `https://<endereço>/.sentinela/saude` mostra se o
+`exige_login` de `sentinela.sistemas` (Supabase do Painel Lube) — **ligada (`true`)
+desde 2026-10-06**, sem rotas públicas: o endereço principal só abre com sessão do
+Painel Lube. `https://<endereço>/.sentinela/saude` mostra se o
 guarda está de pé (`oidc: true`, `lista.ok: true`).
 
 A proteção da Vercel (*Settings › Deployment Protection › Vercel Authentication*,
