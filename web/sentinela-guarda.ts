@@ -12,7 +12,7 @@
 // compilar com ou sem @types/node. Sempre usado atrás de typeof.
 declare const process: any;
 
-export const VERSAO = 'sentinela-guarda/1.0.0';
+export const VERSAO = 'sentinela-guarda/1.1.0';
 
 const CENTRAL = 'https://wkkdcsqwlxjxorutrbnx.supabase.co/functions/v1/sentinela';
 const PORTAL_PADRAO = 'https://painel-lube-distribuidora.vercel.app';
@@ -183,9 +183,47 @@ const RE_INJECAO_CONSULTA: [RegExp, string][] = [
   [/cmd\.exe\s*\/[ckr]\b|[|&;`\n\r]\s*cmd\.exe/i, 'cmd.exe'],
 ];
 
-const RE_ROBO = /curl|wget|python-requests|python-urllib|aiohttp|httpx|go-http-client|okhttp|java\/|libwww|axios|node-fetch|undici|postmanruntime|insomnia|headlesschrome|phantomjs|scrapy|httpclient|powershell/i;
-const RE_CRON = /vercel-cron\//i;
+/* ---------- nível suspeito pelo user-agent (1.1.0) ----------
+   Valem só para página/api, só para quem NÃO tem identidade (sessão da Sentinela ou login do app)
+   e depois das exceções (cron, prévia de link, Office, navegador simples). Navegador de verdade (Chrome,
+   Edge, Firefox, Safari, Samsung Internet, Opera, WebView do Android, navegador dentro do Instagram,
+   Facebook, Telegram, Snapchat...) não casa com nenhuma: os testes passam UAs reais de cada um, inclusive
+   de celular cuja marca termina em "bot". Todas lineares no tamanho do UA. */
+// cliente HTTP, automação e navegador sem tela ("libwww-perl", não "libwww": o Lynx usa a libwww-FM)
+const RE_ROBO = /curl|wget|python-requests|python-urllib|python\/|aiohttp|httpx|go-http-client|okhttp|java\/|libwww-perl|lwp::|axios|node-fetch|undici|postmanruntime|insomnia|headlesschrome|headless|phantomjs|slimerjs|puppeteer|playwright|selenium|webdriver|lighthouse|scrapy|httpclient|powershell|guzzlehttp|httpie|fasthttp|go-resty|deno\/|\bbun\/|dalvik\/|^\s*node\s*$/i;
+// varredores e rastreadores conhecidos que as palavras genéricas não pegam (zgrab, masscan e nmap são ferramenta)
+const RE_VARREDOR = /censys|shodan|zoomeye|netcraft|leakix|l9scan|l9tcpid|expanse|paloaltonetworks|recordedfuture|recorded future|nomorevibe|internet-?measurement|researchscan|onyphe|binaryedge|criminalip|stretchoid|shadowserver|project sonar|modatscanner|chatgpt-user|claude-user|perplexity|mistralai-user|meta-externalagent|anthropic-ai|cohere-ai|googleother|google-inspectiontool|ia_archiver|slurp/i;
+// palavras de rastreador/varredor genérico ("Vercel MCP Fetch", "Global Inventory Crawler", "UptimeRobot/2.0").
+// "bot" só no fim de palavra (Googlebot, AhrefsBot, MJ12bot/). Testadas (como o endereço de contato)
+// depois de tirar o aparelho e os dados do app (semAparelho): "CUBOT X50", "FOSSiBOT F102" são celular.
+const RE_RASTREADOR = /bot(?![a-z])|crawl|spider|scanner|inventory|monitor|probe|fetch|scraper|harvest|indexer|archiver|checker|validator/i;
+// Fabricante e modelo aparecem no parêntese do Android ("(Linux; Android 13; FOSSiBOT F102 ...)"), na cauda
+// do Instagram/Threads ("Android (33/13; ...; FOSSiBOT; F102; ...)"), no parêntese do Telegram e do Snapchat
+// ("(Fossibot F102; Android 13; ...)"), no do iPhone e no colchete do Facebook/Messenger/Pinterest
+// ("[FB_IAB/...;FBMF/FOSSiBOT;FBDV/F102;...]"). Saem todos: parêntese (com um nível aninhado, "moto g(60)")
+// que fale de Android/iPhone/iPad ou venha depois de "Android ", e todo colchete. "(compatible; XBot/1.0; ...)"
+// fica. Linear: cada parêntese e colchete é varrido uma vez (as classes excluem o caractere que abre).
+const RE_GRUPO = /(android\s*)?\((?:[^()]|\([^()]*\))*\)|\[[^\[\]]*\]/gi;
+const RE_GRUPO_APARELHO = /android|iphone|ipad|ipod/i;
+// marcas de celular que terminam em "bot", onde quer que apareçam (FBMF/CUBOT, "Fossibot F102")
+const RE_MARCA_BOT = /cubot|fossibot/gi;
+function semAparelho(ua: string): string {
+  return ua.replace(RE_GRUPO, (m: string, depoisDeAndroid?: string) =>
+    depoisDeAndroid || m.charAt(0) === '[' || RE_GRUPO_APARELHO.test(m) ? ' ' : m).replace(RE_MARCA_BOT, ' ');
+}
+// endereço no UA ("+https://nomorevibe.app", "+claudebot@anthropic.com", "; +info@netcraft.com"): navegador nunca manda
+const RE_CONTATO = /https?:\/\/|www\.|@[\w-]+\.[a-z]{2,}|[(;]\s*\+/i;
+// motor de navegador: todo navegador real o declara. "Mozilla/5.0 (compatible)" sem motor é robô.
+const RE_MOTOR = /applewebkit|gecko|trident|presto|khtml|goanna/i;
+const RE_CARA_NAVEGADOR = /^\s*(?:mozilla|opera)\/\d/i;
+// Exceções (regraExcecao). O agendador da Vercel manda exatamente "vercel-cron/1.0": âncora no começo.
+const RE_CRON = /^vercel-cron\/\d/i;
 const RE_PREVIA = /whatsapp|telegrambot|slackbot|facebookexternalhit|twitterbot|linkedinbot|discordbot|skypeuripreview|microsoftpreview/i;
+// Office: a sondagem do Word/Excel/Outlook antes de abrir um link ("o Office abre o navegador depois")
+const RE_OFFICE = /^Microsoft Office (?:Existence|Protocol) Discovery|^Microsoft Office (?:Word|Excel|PowerPoint|OneNote|Outlook|Access|Visio|Publisher|Project) \d{4}|\bms-office\b|^Microsoft Office\/\d+\.\d+ \(/i;
+// navegadores de texto e simples, leitor em voz alta e o gerenciador de download do Android: pessoa
+// usando, sem cara de Chrome (sem motor, sem "Mozilla/", com endereço no UA ou sem cabeçalhos de navegação)
+const RE_NAVEGADOR_SIMPLES = /^w3m\/\d|^Lynx\/\d|^Links \(\d|^ELinks\/\d|^Dillo\/\d|\bNetSurf\/\d|^UCWEB\/|\bUCBrowser\/|\bGoogle-Read-Aloud\b|^AndroidDownloadManager\/\d/i;
 const RE_BUSCADOR = /googlebot|bingbot|duckduckbot|yandexbot|baiduspider|applebot/i;
 
 // parâmetros cujo valor não vai para o registro (quando não é ataque)
@@ -261,20 +299,55 @@ function regraArquivo(lista: Lista | null, caminho: string): Achado | null {
   return null;
 }
 
+// Exceções liberadas (só veem a tela de login ou o redirect para o portal; nunca dispensam sem_login).
+// UA que também traz cliente HTTP, automação, varredor conhecido ou buscador não é exceção: "curl/8 WhatsApp/2",
+// "python-requests vercel-cron/1.0" e "Googlebot ... Slackbot" seguem para as regras de robô. Só o
+// LinkedIn declara um cliente HTTP no próprio UA ("LinkedInBot/1.0 (...; Apache-HttpClient +http://www.linkedin.com)").
 function regraExcecao(ua: string): Achado | null {
+  const semLinkedin = /^LinkedInBot\//i.test(ua) ? ua.replace(/apache-httpclient/gi, ' ') : ua;
+  if (RE_ROBO.test(semLinkedin) || RE_VARREDOR.test(ua) || RE_BUSCADOR.test(ua)) return null;
   if (RE_CRON.test(ua)) return { regra: 'cron', nivel: null, motivo: 'agendamento da Vercel', decisao: 'liberado' };
   if (RE_PREVIA.test(ua)) return { regra: 'previa_link', nivel: null, motivo: 'prévia de link', decisao: 'liberado' };
-  const b = RE_BUSCADOR.exec(ua);
-  if (b) return { regra: 'buscador', nivel: null, motivo: 'buscador: ' + b[0].toLowerCase(), decisao: 'observado' };
+  if (RE_OFFICE.test(ua)) return { regra: 'office', nivel: null, motivo: 'link aberto pelo Office', decisao: 'liberado' };
+  const n = RE_NAVEGADOR_SIMPLES.exec(ua);
+  if (n) return { regra: 'navegador_simples', nivel: null, motivo: 'navegador simples ou leitor: ' + n[0].toLowerCase(), decisao: 'liberado' };
   return null;
+}
+
+// 1.1.0: buscador deixou de ser exceção observada; é suspeito (barra no proteger). Arquivo segue
+// (robots.txt, sitemap): é por ele que o buscador aprende a não indexar.
+function regraBuscador(ua: string, tipo: Tipo): Achado | null {
+  if (tipo !== 'pagina' && tipo !== 'api') return null;
+  const b = RE_BUSCADOR.exec(ua);
+  return b ? { regra: 'buscador', nivel: 'suspeito', motivo: 'buscador: ' + b[0].toLowerCase() } : null;
 }
 
 function regraRobo(ua: string, tipo: Tipo): Achado | null {
   if (tipo !== 'pagina' && tipo !== 'api') return null;
-  if (!ua.trim()) return { regra: 'robo', nivel: 'suspeito', motivo: 'user-agent vazio' };
+  const robo = (motivo: string): Achado => ({ regra: 'robo', nivel: 'suspeito', motivo });
+  if (!ua.trim()) return robo('user-agent vazio');
   const m = RE_ROBO.exec(ua);
-  if (m) return { regra: 'robo', nivel: 'suspeito', motivo: 'user-agent de robô: ' + m[0].toLowerCase() };
+  if (m) return robo('user-agent de robô: ' + m[0].toLowerCase().trim());
+  const v = RE_VARREDOR.exec(ua);
+  if (v) return robo('varredor conhecido: ' + v[0].toLowerCase());
+  const semApp = semAparelho(ua);
+  const r = RE_RASTREADOR.exec(semApp);
+  if (r) return robo('user-agent de rastreador: ' + r[0].toLowerCase());
+  if (RE_CONTATO.test(semApp)) return robo('user-agent com endereço de contato (marca de robô)');
+  const cara = RE_CARA_NAVEGADOR.test(ua);
+  if (cara && !RE_MOTOR.test(ua)) return robo('user-agent genérico: Mozilla sem motor de navegador');
+  // API pode ser chamada de servidor para servidor com UA próprio; página é para navegador
+  if (!cara && tipo === 'pagina') return robo('user-agent sem cara de navegador');
   return null;
+}
+
+// 1.1.0: navegação de navegador de verdade sempre traz sec-fetch-mode (Chrome 76+, Firefox 90+,
+// Safari 16.4+) e accept-language (todos); faltar os dois numa página é robô com UA de navegador.
+// Só GET/HEAD de página; quem chama é que garante: sem identidade e IP não confiável.
+function regraNaoNavegador(h: Headers, metodo: string, tipo: Tipo): Achado | null {
+  if (tipo !== 'pagina' || (metodo !== 'GET' && metodo !== 'HEAD')) return null;
+  if ((h.get('sec-fetch-mode') || '').trim() || (h.get('accept-language') || '').trim()) return null;
+  return { regra: 'nao_navegador', nivel: 'suspeito', motivo: 'não é navegador: página pedida sem sec-fetch-mode e sem accept-language' };
 }
 
 function exigeLogin(lista: Lista | null, caminho: string): boolean {
@@ -369,20 +442,29 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
     return await barrar(ev, ataque, url.search, cs, ctx);
   }
 
-  // 2) lista da central (+ mapa local)
+  // 2) lista da central (+ mapa local). Bloqueio suspeito (robô, rajada, força bruta, Tor, IA) pega o IP
+  // inteiro: no CGNAT do 4G e no Wi-Fi de filial ele cai sobre muita gente. Quem tem identidade (sessão
+  // válida da Sentinela ou login do app) segue e fica registrado; bloqueio certo barra todo mundo.
   let suspeito: Achado | null = null;
+  let listaComLogin: Achado | null = null;
   const bloq = regraLista(lista, ip, ja4, agora, confiavel);
   if (bloq) {
     if (bloq.nivel === 'certo') return await barrar(ev, bloq, consulta, cs, ctx);
-    suspeito = bloq;
+    if (ev.identidade) listaComLogin = bloq;
+    else suspeito = bloq;
   }
 
-  // 3) arquivo proibido → 4) exceções → 5) robô
+  // 3) arquivo proibido → 4) exceções (cron, prévia, Office, navegador simples) → 5) buscador → robô → não navegador.
+  // Quem tem identidade (sessão válida da Sentinela ou login do app) é pessoa: o UA e os
+  // cabeçalhos não pesam. Ataque certo (acima) continua valendo para todos.
   if (!suspeito) suspeito = regraArquivo(lista, caminhoDec);
   let excecao: Achado | null = null;
   if (!suspeito) {
     excecao = regraExcecao(ua);
-    if (!excecao) suspeito = regraRobo(ua, tipo);
+    if (!excecao && !ev.identidade) {
+      suspeito = regraBuscador(ua, tipo) || regraRobo(ua, tipo) ||
+        (confiavel ? null : regraNaoNavegador(h, metodo, tipo));
+    }
   }
 
   // suspeito: confiável ignora; proteger barra; observar só registra
@@ -392,6 +474,10 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
     if (confiavel) ignorado = suspeito;
     else if (lista && lista.modo === 'proteger') return await barrar(ev, suspeito, consulta, cs, ctx);
     else observado = suspeito;
+  }
+  if (listaComLogin && !observado && !ignorado) {
+    if (confiavel) ignorado = listaComLogin;
+    else observado = { regra: 'lista', nivel: 'suspeito', motivo: listaComLogin.motivo + ' · com login: não barrado' };
   }
 
   // 6) passe vindo do portal
