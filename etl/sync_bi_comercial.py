@@ -137,7 +137,8 @@ def main() -> int:
     resultados: list[tuple[str, str, int | None, int | None, float]] = []
 
     try:
-        with bi.conectar_oracle(cfg_ora) as conn_ora, bi.conectar_supabase(cfg_pg) as conn_pg:
+        with bi.conectar_oracle(cfg_ora) as conn_ora, bi.conectar_supabase(cfg_pg) as conn_pg, \
+             bi.tranca_de_carga(conn_pg, args.grupo):
             for consulta in consultas:
                 relogio = bi.cronometro()
                 log.info("=" * 70)
@@ -174,6 +175,11 @@ def main() -> int:
 
             _resumo(resultados)
 
+    except bi.CargaJaRodando as aviso:
+        # Nao e erro: e a tranca fazendo o trabalho dela. Sair com 0 evita que o
+        # Agendador fique reiniciando uma tarefa que esta certa em nao rodar.
+        log.warning("%s", aviso)
+        return 0
     except Exception:
         log.exception("Nao consegui nem abrir as conexoes — nada foi carregado.")
         return 1

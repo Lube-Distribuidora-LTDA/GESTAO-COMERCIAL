@@ -16,6 +16,7 @@ Nao roda sozinho — e importado pelos scripts sync_*.py e diagnostico_*.py.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sys
@@ -103,7 +104,13 @@ def carregar_env() -> None:
     com as credenciais, valendo para todos os BIs."""
     pasta_do_script = os.path.dirname(os.path.abspath(sys.argv[0]))
     pasta_compartilhada = os.path.dirname(pasta_do_script)
-    for pasta in (pasta_do_script, pasta_compartilhada):
+    # Na pasta de rede, arrumada em subpastas por assunto, o ENV mora em
+    # "1 - CONFIGURACAO" — que e IRMA da pasta do script, nao pai dela. Sem
+    # este terceiro lugar, rodar qualquer coisa direto da rede falha dizendo
+    # que falta SUPABASE_DB_HOST, o que nao ajuda ninguem a entender o que
+    # houve. Na maquina instalada tudo fica junto e o primeiro lugar resolve.
+    pasta_de_configuracao = os.path.join(pasta_compartilhada, "1 - CONFIGURACAO")
+    for pasta in (pasta_do_script, pasta_compartilhada, pasta_de_configuracao):
         for candidato in ("ENV", ".env", "env"):
             caminho = os.path.join(pasta, candidato)
             if os.path.isfile(caminho):
@@ -111,8 +118,9 @@ def carregar_env() -> None:
                 log.info("Variaveis de configuracao carregadas de %s", caminho)
                 return
     log.warning(
-        "Nenhum arquivo ENV/.env encontrado (nem na pasta do script, nem na pasta "
-        "acima) — usando apenas variaveis de ambiente ja definidas no sistema."
+        "Nenhum arquivo ENV/.env encontrado (procurei em %s, %s e %s) — usando "
+        "apenas variaveis de ambiente ja definidas no sistema.",
+        pasta_do_script, pasta_compartilhada, pasta_de_configuracao
     )
 
 
@@ -199,6 +207,66 @@ def conectar_supabase(cfg: SupabaseConfig):
         yield conn
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Tranca: uma carga de cada vez, na empresa inteira
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def tranca_de_carga(conn_pg, grupo: str):
+    """Garante que so uma carga deste grupo rode por vez, em qualquer maquina.
+
+    POR QUE ISTO EXISTE
+
+    Em 08/10/2026 descobrimos que DUAS maquinas tinham as mesmas tarefas
+    agendadas (a VM e a estacao de quem instalou). As duas truncavam e inseriam
+    nas mesmas tabelas no mesmo minuto; uma ganhava e a outra morria esperando o
+    lock, aos exatos 120 segundos do statement_timeout. A carga da margem (3,3
+    milhoes de linhas) falhou na primeira tentativa todas as noites por uma
+    semana, e em dois dias nao foi atualizada.
+
+    Apagar a tarefa duplicada resolveu aquele caso. Esta tranca resolve a
+    classe: nao importa quantas maquinas tenham a tarefa, quem chegar depois
+    descobre na hora que ja tem carga rodando, avisa e sai sem estragar nada.
+
+    E um advisory lock do proprio Postgres: morre junto com a sessao, entao uma
+    maquina que trave ou perca a rede nao deixa a tranca presa para sempre.
+    """
+    # Um numero por grupo, estavel: o mesmo texto sempre da a mesma chave.
+    chave = _chave_da_tranca("carga:" + SCHEMA_CONTROLE + ":" + grupo)
+    with conn_pg.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (chave,))
+        peguei = cur.fetchone()[0]
+    conn_pg.rollback()
+
+    if not peguei:
+        raise CargaJaRodando(
+            f"Ja existe uma carga do grupo '{grupo}' rodando (possivelmente em "
+            f"outra maquina). Esta rodada vai ser pulada — e o certo: duas "
+            f"cargas ao mesmo tempo disputam as mesmas tabelas e uma morre no "
+            f"meio. Se isto se repetir, confira se mais de uma maquina tem a "
+            f"tarefa agendada."
+        )
+    try:
+        yield
+    finally:
+        try:
+            with conn_pg.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (chave,))
+            conn_pg.rollback()
+        except Exception:
+            pass  # a sessao fechando ja solta o lock
+
+
+class CargaJaRodando(RuntimeError):
+    """Outra maquina esta com a carga deste grupo na mao."""
+
+
+def _chave_da_tranca(texto: str) -> int:
+    """Texto -> inteiro de 64 bits, que e o que o advisory lock aceita."""
+    digest = hashlib.sha1(texto.encode("utf-8")).digest()[:8]
+    return int.from_bytes(digest, "big", signed=True)
 
 
 # ---------------------------------------------------------------------------

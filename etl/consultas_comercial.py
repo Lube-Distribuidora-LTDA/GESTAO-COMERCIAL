@@ -163,8 +163,12 @@ def motivo_e_do_rca(motivo) -> bool:
 # O nome do RCA no Power BI vinha da propria tabela de vendas: um RCA que teve
 # devolucao mas nao teve venda nas filiais da comissao simplesmente sumia da
 # tela. Com a dimensao, o nome existe independente de ter vendido.
+# EMAIL, EMAIL2, BLOQUEIO e DTTERMINO entraram em 2026-10-07 para o SAQ (tela de
+# chamado do RCA): ele so manda o comprovante para e-mail que esteja no cadastro
+# de um RCA ativo. O painel do COMERCIAL nao le essas colunas.
 SQL_DIM_RCA = """
-SELECT U.CODUSUR, U.NOME, U.CODSUPERVISOR, U.CODEQUIPE
+SELECT U.CODUSUR, U.NOME, U.CODSUPERVISOR, U.CODEQUIPE,
+       U.EMAIL, U.EMAIL2, U.BLOQUEIO, U.DTTERMINO
   FROM PCUSUARI U
 """
 
@@ -457,10 +461,14 @@ CONSULTAS: list[Consulta] = [
         pagina="(dimensao compartilhada)",
         sql=SQL_DIM_RCA,
         destino="core.dim_rca",
-        colunas=("codusur", "nome", "codsupervisor", "codequipe", "updated_at"),
+        colunas=("codusur", "nome", "codsupervisor", "codequipe",
+                 "email", "email2", "bloqueio", "dttermino", "updated_at"),
         chave_conflito=("codusur",),
         mapear=lambda r: (inteiro(r["codusur"]), texto(r["nome"]),
-                          inteiro(r["codsupervisor"]), inteiro(r["codequipe"]), AGORA()),
+                          inteiro(r["codsupervisor"]), inteiro(r["codequipe"]),
+                          texto(r["email"]), texto(r["email2"]), texto(r["bloqueio"]),
+                          r["dttermino"].date() if isinstance(r["dttermino"], datetime) else r["dttermino"],
+                          AGORA()),
         linhas_esperadas=None,
     ),
     Consulta(
