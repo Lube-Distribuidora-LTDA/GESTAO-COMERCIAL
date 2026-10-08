@@ -62,6 +62,7 @@ $ARQUIVOS = @(
     "3 - PAINEL DE ABERTURA DE MARGEM\servidor_margem.py",
     "3 - PAINEL DE ABERTURA DE MARGEM\painel_margem.html",
     "3 - PAINEL DE ABERTURA DE MARGEM\agente_margem.py",
+    "3 - PAINEL DE ABERTURA DE MARGEM\conferir_margem.py",
     "3 - PAINEL DE ABERTURA DE MARGEM\iniciar_servidor_margem.bat"
 )
 
