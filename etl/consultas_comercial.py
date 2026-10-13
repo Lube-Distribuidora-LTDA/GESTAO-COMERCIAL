@@ -163,7 +163,7 @@ def motivo_e_do_rca(motivo) -> bool:
 # O nome do RCA no Power BI vinha da propria tabela de vendas: um RCA que teve
 # devolucao mas nao teve venda nas filiais da comissao simplesmente sumia da
 # tela. Com a dimensao, o nome existe independente de ter vendido.
-# EMAIL, EMAIL2, BLOQUEIO e DTTERMINO entraram em 2026-10-07 para o SAQ (tela de
+# EMAIL, EMAIL2, BLOQUEIO e DTTERMINO entraram em 2026-10-07 para o SAC (tela de
 # chamado do RCA): ele so manda o comprovante para e-mail que esteja no cadastro
 # de um RCA ativo. O painel do COMERCIAL nao le essas colunas.
 SQL_DIM_RCA = """
@@ -171,6 +171,23 @@ SELECT U.CODUSUR, U.NOME, U.CODSUPERVISOR, U.CODEQUIPE,
        U.EMAIL, U.EMAIL2, U.BLOQUEIO, U.DTTERMINO
   FROM PCUSUARI U
 """
+
+# Capa das notas de saida dos ultimos 45 dias, para o SAC (tela de chamado do RCA)
+# conferir a data de emissao: so aceita NF emitida ate 1 mes atras (pedido do
+# Julio, 2026-10-09). Upsert por NUMTRANSVENDA; NUMNOTA se repete entre filiais.
+SQL_DIM_NF_SAIDA = """
+SELECT N.NUMTRANSVENDA, N.NUMNOTA, N.SERIE, N.ESPECIE, N.CODFILIAL, N.DTSAIDA,
+       N.DTCANCEL, N.CODCLI, N.CODUSUR, N.VLTOTAL
+  FROM PCNFSAID N
+ WHERE N.DTSAIDA >= TRUNC(SYSDATE) - 45
+   AND N.NUMTRANSVENDA IS NOT NULL
+   AND N.NUMNOTA IS NOT NULL
+"""
+
+
+def _data(v):
+    return v.date() if isinstance(v, datetime) else v
+
 
 SQL_DIM_SUPERVISOR = """
 SELECT S.CODSUPERVISOR, S.NOME
@@ -469,6 +486,21 @@ CONSULTAS: list[Consulta] = [
                           texto(r["email"]), texto(r["email2"]), texto(r["bloqueio"]),
                           r["dttermino"].date() if isinstance(r["dttermino"], datetime) else r["dttermino"],
                           AGORA()),
+        linhas_esperadas=None,
+    ),
+    Consulta(
+        nome="dim_nf_saida",
+        descricao="Capa das NFs de saida (PCNFSAID), ultimos 45 dias, para o SAC conferir a emissao",
+        pagina="(dimensao compartilhada - SAC)",
+        sql=SQL_DIM_NF_SAIDA,
+        destino="core.dim_nf_saida",
+        colunas=("numtransvenda", "numnota", "serie", "especie", "codfilial", "dtsaida",
+                 "dtcancel", "codcli", "codusur", "vltotal", "updated_at"),
+        chave_conflito=("numtransvenda",),
+        mapear=lambda r: (inteiro(r["numtransvenda"]), inteiro(r["numnota"]), texto(r["serie"]),
+                          texto(r["especie"]), inteiro(texto(r["codfilial"])), _data(r["dtsaida"]),
+                          _data(r["dtcancel"]), inteiro(r["codcli"]), inteiro(r["codusur"]),
+                          num(r["vltotal"]), AGORA()),
         linhas_esperadas=None,
     ),
     Consulta(

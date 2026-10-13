@@ -43,11 +43,17 @@ bi.definir_schema("comercial")
 # Agregados do painel que sao recalculados depois da carga, na mesma conexao.
 # Ficam aqui (e nao presos a uma consulta) porque dependem de mais de uma
 # tabela: a comissao le a fato_comissao_nf, a devolucao le a fato_devolucao.
+# TODAS as views materializadas do painel precisam estar aqui. A mv_margem_dia
+# ficou de fora quando foi criada (29/09/2026, para tirar o painel do timeout) e
+# so se descobriu em 13/10: a pagina "Margem por item" mostrava ZERO para
+# qualquer periodo depois de 28/09, porque le dela. A tela nao estava errada —
+# para ela nao havia dado mesmo.
 VIEWS_DO_PAINEL = (
     "mv_comissao_rca_mes",
     "mv_comissao_mes",
     "mv_devolucao_rca_mes",
     "mv_margem_mes",
+    "mv_margem_dia",
 )
 
 
