@@ -33,6 +33,7 @@ import sys
 
 import bi_comum as bi
 from consultas_comercial import CONSULTAS, selecionar
+from datetime import date, timedelta
 
 log = bi.configurar_log("sync_bi_comercial.log")
 
@@ -99,26 +100,47 @@ def _atualizar_views(conn_pg) -> None:
             log.warning("  nao consegui atualizar a view %s: %s", view, exc)
 
 
+# Periodos que ficam sempre prontos. O mes corrente e o que quase todo mundo
+# abre; o anterior e o segundo mais pedido (fechamento de comissao).
+def _periodos_para_aquecer() -> list[tuple[str, str]]:
+    hoje = date.today()
+    inicio_mes = hoje.replace(day=1)
+    fim_anterior = inicio_mes - timedelta(days=1)
+    return [
+        (inicio_mes.isoformat(), hoje.isoformat()),
+        (fim_anterior.replace(day=1).isoformat(), fim_anterior.isoformat()),
+    ]
+
+
 def _aquecer_painel(conn_pg) -> None:
-    """Chama a funcao do painel uma vez, so para deixar o banco quente.
+    """Guarda o JSON pronto do painel em comercial.painel_cache.
 
-    Motivo: a fato_margem_item tem 594 MB. Quando ninguem consulta ha um tempo,
-    a primeira leitura vem do disco e passou de 60 segundos em producao — o
-    limite da funcao da Vercel — dando timeout para quem abriu o painel
-    primeiro. Rodando isto ao fim de cada carga (8x ao dia), as paginas ficam no
-    cache do Postgres e a primeira pessoa do dia nao paga essa conta.
+    ANTES isto so "aquecia" o cache do Postgres chamando a painel_dados e
+    jogando o resultado fora. Funcionou enquanto o banco deu conta. Em 14/10 o
+    processador do Supabase estava ~400x mais lento que o normal (contar ate um
+    milhao levava 42 s; o normal e 0,1 s), a painel_dados passou de 0,2 s para
+    100 s, e a Vercel corta em 60 — o painel respondia 504 e nao abria para
+    ninguem.
 
-    Se falhar, nao e problema: o painel continua funcionando, so mais lento."""
-    relogio = bi.cronometro()
-    try:
-        with conn_pg.cursor() as cur:
-            cur.execute("SELECT length(comercial.painel_dados()::text)")
-            tamanho = cur.fetchone()[0]
-        conn_pg.commit()
-        log.info("  painel aquecido em %.1fs (resposta de %s KB)", relogio(), round(tamanho / 1024))
-    except Exception as exc:  # noqa: BLE001
-        conn_pg.rollback()
-        log.warning("  nao consegui aquecer o painel: %s", exc)
+    AGORA o resultado e guardado, e a /api/dados so le a linha pronta: 8 ms em
+    vez de 100 s. E o mesmo remedio do painel de reposicoes, que respondeu em
+    0,18 s no dia em que o banco saturou.
+
+    Se falhar, nao derruba a carga: o painel continua servindo o JSON anterior,
+    com a data da ultima carga a vista, e o Guardiao avisa."""
+    for de, ate in _periodos_para_aquecer():
+        relogio = bi.cronometro()
+        try:
+            with conn_pg.cursor() as cur:
+                cur.execute("SELECT comercial.painel_cache_guardar(%s::date, %s::date)", (de, ate))
+                tamanho = cur.fetchone()[0]
+            conn_pg.commit()
+            log.info("  painel guardado (%s a %s) em %.1fs — %s KB",
+                     de, ate, relogio(), round(tamanho / 1024))
+        except Exception as exc:  # noqa: BLE001
+            conn_pg.rollback()
+            log.warning("  nao consegui guardar o painel de %s a %s: %s", de, ate, exc)
+    return
 
 
 def main() -> int:
