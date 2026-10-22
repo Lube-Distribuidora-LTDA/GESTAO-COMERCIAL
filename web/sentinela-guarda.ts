@@ -12,7 +12,7 @@
 // compilar com ou sem @types/node. Sempre usado atrás de typeof.
 declare const process: any;
 
-export const VERSAO = 'sentinela-guarda/1.1.0';
+export const VERSAO = 'sentinela-guarda/1.2.0';
 
 const CENTRAL = 'https://wkkdcsqwlxjxorutrbnx.supabase.co/functions/v1/sentinela';
 const PORTAL_PADRAO = 'https://painel-lube-distribuidora.vercel.app';
@@ -564,21 +564,34 @@ async function trocarPasse(ev: Evento, url: URL, passe: { valor: string; resto: 
   }
   const headers = new Headers({ location: limpa, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   ev.consulta = corta(redigirConsulta(passe.resto), 300) || '';
+  const site = atributosCookie(h);
   if (sessao) {
-    headers.append('set-cookie', COOKIE_SESSAO + '=' + sessao + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800');
-    if (lerCookie(h.get('cookie'), COOKIE_FALHA)) headers.append('set-cookie', COOKIE_FALHA + '=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+    headers.append('set-cookie', COOKIE_SESSAO + '=' + sessao + '; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=28800');
+    if (lerCookie(h.get('cookie'), COOKIE_FALHA)) headers.append('set-cookie', COOKIE_FALHA + '=; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=0');
     ev.decisao = 'liberado';
     ev.regra = null;
     ev.motivo = 'entrada pelo Painel Lube';
     if (email) { ev.identidade = email; ev.identidade_origem = 'passe'; }
   } else {
-    headers.append('set-cookie', COOKIE_FALHA + '=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=60');
+    headers.append('set-cookie', COOKIE_FALHA + '=1; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=60');
     ev.decisao = 'observado';
     ev.regra = 'passe_invalido';
     ev.motivo = 'passe inválido, expirado ou já usado';
   }
   registrar(ev, cs, ctx);
   return new Response(null, { status: 302, headers });
+}
+
+// 1.2.0: o BI aberto DENTRO do Painel Lube (iframe) é contexto de outro site, e lá um
+// cookie SameSite=Lax não volta. Quando a troca do passe acontece num iframe, o cookie
+// sai SameSite=None + Partitioned (CHIPS): fica guardado só na "partição" do portal,
+// ou seja, só é enviado quando o sistema está dentro do portal. Aberto direto (aba
+// normal) segue Lax como sempre, e um site de fora que embutir o sistema não recebe
+// esse cookie (a partição dele é outra).
+function atributosCookie(h: Headers): string {
+  return (h.get('sec-fetch-dest') || '').trim().toLowerCase() === 'iframe'
+    ? 'SameSite=None; Partitioned'
+    : 'SameSite=Lax';
 }
 
 async function saude(h: Headers, ipTxt: string, cs: Cred[], ctx: Ctx | undefined): Promise<Response> {
