@@ -12,7 +12,7 @@
 // compilar com ou sem @types/node. Sempre usado atrás de typeof.
 declare const process: any;
 
-export const VERSAO = 'sentinela-guarda/1.2.0';
+export const VERSAO = 'sentinela-guarda/1.3.0';
 
 const CENTRAL = 'https://wkkdcsqwlxjxorutrbnx.supabase.co/functions/v1/sentinela';
 const PORTAL_PADRAO = 'https://painel-lube-distribuidora.vercel.app';
@@ -42,6 +42,14 @@ const FILA_IDADE = 2000;            // lote incompleto sai na próxima requisiç
 const CONTADORES_MAX = 2000;
 const RECUSA_MS = 10 * 60000;       // token recusado pela central fica de quarentena
 const RECUSA_HMAC_MS = 60000;
+// 1.3.0: rede da Lube (docs/SENTINELA-REDE.md §6)
+const REDE_FRESCA = 120000;         // liberação só vale com a rede da lista de até 2 min; lista mais velha espera a renovação
+const REDE_GUARDADA = 24 * 3600000; // lista sem o bloco "rede" (central antiga, RPC fora): a última vale por até 24 h
+const REDES_MAX = 1000;             // a central manda no máximo 200; o teto aqui só protege a CPU
+const LIBERADOS_MAX = 500;
+const HASHES_MAX = 500;
+const PREFIXO_SENTINELA = '/.sentinela/';
+const MSG_FORA_DA_REDE = 'Este sistema só abre na rede da Lube. Você está fora da empresa. Se precisa acessar, fale com o TI.';
 
 // Chave pública ES256 da Sentinela (sentinela.chaves, criada em 2026-10-06). Não é segredo.
 // Serve ao modo "fechado" quando a lista não veio (partida a frio, central fora): sem ela não
@@ -58,7 +66,10 @@ type Ctx = { waitUntil?(p: Promise<unknown>): void };
 // fechado: sistema que só abre com login do Painel Lube. Vale quando a lista não vem (partida a
 // frio, central fora): aí só passa quem tem sessão válida. Com lista, quem manda é o exige_login do banco.
 type Fechado = { projeto: string; slug: string; rotas?: string[]; chaves?: any[] };
-type Opcoes = { identidade?: { email: string; origem: 'sessao_app' }; fechado?: Fechado | null };
+// maquina (1.3.0): o app só marca DEPOIS de conferir o segredo dele (CRON_SECRET, AQUECEDOR_SEGREDO).
+// Vale só com origem 'sessao_app' e nome de robô ("robo do gestao ti (agendador da vercel)"); e-mail
+// de pessoa com maquina: true não é máquina. Máquina passa pela regra de rede, e por nada mais.
+type Opcoes = { identidade?: { email: string; origem: 'sessao_app'; maquina?: boolean }; fechado?: Fechado | null };
 type Resp = { ok: boolean; status: number; json: any; recusada?: boolean };
 
 interface Evento {
@@ -92,7 +103,29 @@ interface Lista {
   sistema: Sistema | null;
   jwks: any[]; chaves: Map<string, Promise<CryptoKey | null>>;
   sessoes: Map<string, { email: string | null; exp: number }>;
+  rede: RedeLube | null;   // 1.3.0; null = sem regra de rede
 }
+
+// Rede da Lube (1.3.0). em = quando o bloco chegou (pode ser de uma lista anterior, §6.2);
+// liberados = SHA-256 do e-mail → fim da liberação (ms). A lista nunca traz e-mail.
+type ModoRede = 'desligado' | 'observar' | 'exigir';
+interface RedeLube {
+  modo: ModoRede; em: number; vazia: boolean;
+  ips: Set<string>; faixas: Rede[]; liberados: Map<string, number>;
+}
+
+// o que a regra de rede precisa saber de uma requisição
+interface PedidoRede {
+  ip: Ip | null;            // só o x-real-ip (a Vercel sobrescreve; o visitante não escolhe)
+  semIpVercel: boolean;     // veio IP por outro cabeçalho, mas não pelo x-real-ip
+  caminho: string;          // pathname como veio
+  caminhoDec: string;       // pathname decodificado
+  identidade: boolean;      // sessão da Sentinela, login do app ou passe trocado
+  email: string | null;     // e-mail da pessoa (a liberação é pelo hash dele)
+  maquina: boolean;
+}
+
+type AchadoRede = Achado & { decisao: Decisao; portal: string };
 
 /* ---------- estado do módulo (vive enquanto a instância vive) ---------- */
 let cache: Lista | null = null;
@@ -109,6 +142,8 @@ const recusados = new Map<string, number>();                       // token OIDC
 let hmacRecusadoAte = 0;
 const plausiveis = new Map<string, number>();                      // token → exp (ms), 0 = não serve
 let hmacCache: { chave: string; key: Promise<CryptoKey> } | null = null;
+let ultimaRede: RedeLube | null = null;                            // último bloco "rede" que a central mandou
+const hashes = new Map<string, Promise<string>>();                 // e-mail (minúsculas) → SHA-256 hex
 
 const RUNTIME: string = (function () {
   try {
@@ -225,6 +260,8 @@ const RE_OFFICE = /^Microsoft Office (?:Existence|Protocol) Discovery|^Microsoft
 // usando, sem cara de Chrome (sem motor, sem "Mozilla/", com endereço no UA ou sem cabeçalhos de navegação)
 const RE_NAVEGADOR_SIMPLES = /^w3m\/\d|^Lynx\/\d|^Links \(\d|^ELinks\/\d|^Dillo\/\d|\bNetSurf\/\d|^UCWEB\/|\bUCBrowser\/|\bGoogle-Read-Aloud\b|^AndroidDownloadManager\/\d/i;
 const RE_BUSCADOR = /googlebot|bingbot|duckduckbot|yandexbot|baiduspider|applebot/i;
+// 1.3.0: nome de robô no formato da central (testado em minúsculas). Sem "@": e-mail de pessoa nunca casa.
+const RE_MAQUINA = /^rob[oô] [a-z0-9 ()._-]{3,80}$/;
 
 // parâmetros cujo valor não vai para o registro (quando não é ataque)
 const RE_PARAM_SENSIVEL = /^(?:access_token|refresh_token|id_token|token|code|senha|password|passwd|pwd|apikey|api_key|key|secret|client_secret|jwt|signature|sig)$/i;
@@ -391,6 +428,9 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
   let ipTxt = ipCliente(h);
   const ip = lerIp(ipTxt);
   if (!ip) ipTxt = '';
+  // 1.3.0: a rede da Lube confere só o x-real-ip, que a Vercel sobrescreve. x-forwarded-for e
+  // x-vercel-forwarded-for (os outros dois do ipCliente) não põem ninguém "dentro".
+  const ipRede = lerIp((h.get('x-real-ip') || '').trim());
   const cs = credenciais(request);
 
   if (url.pathname === ROTA_SAUDE && metodo === 'GET') return await saude(h, ipTxt, cs, ctx);
@@ -414,7 +454,8 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
   const ev = coletar(h, url, metodo, tipo, ipTxt, consulta, ua, agora);
 
   // identidade: a do app (Next) tem prioridade; senão o cookie de sessão da Sentinela
-  const idApp = opcoes && opcoes.identidade && opcoes.identidade.email;
+  const idOp = opcoes && opcoes.identidade;
+  const idApp = idOp && idOp.email;
   let sessaoInvalida = false;
   if (idApp) {
     ev.identidade = String(idApp).slice(0, 200);
@@ -424,6 +465,10 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
     if (s.email) { ev.identidade = s.email; ev.identidade_origem = 'passe'; }
     sessaoInvalida = s.invalida;
   }
+  const pr: PedidoRede = {
+    ip: ipRede, semIpVercel: !ipRede && !!ip, caminho: url.pathname, caminhoDec,
+    identidade: !!ev.identidade, email: ev.identidade, maquina: !!(idApp && ehMaquina(idOp)),
+  };
 
   const confiavel = !!(lista && ip && ehConfiavel(lista, ip));
 
@@ -480,15 +525,18 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
     else observado = { regra: 'lista', nivel: 'suspeito', motivo: listaComLogin.motivo + ' · com login: não barrado' };
   }
 
-  // 6) passe vindo do portal
-  if (passe) return await trocarPasse(ev, url, passe, h, cs, ctx);
+  // 6) passe vindo do portal (a rede é conferida na troca)
+  if (passe) return await trocarPasse(ev, url, passe, h, cs, ctx, lista, pr);
 
   // 7) sistema que exige login
   if (!ev.identidade && exigeLogin(lista, caminhoDec)) {
     return semLogin(ev, lista as Lista, h, metodo, tipo, observado, sessaoInvalida, cs, ctx);
   }
 
-  // 8) segue
+  // 8) rede da Lube (1.3.0): só decide quem ia passar. Desligado ou sem bloco "rede" = 1.2.0.
+  const rede = await regraRede(lista, pr, cs, ctx);
+
+  // 9) segue (ou 403 fora da rede)
   if (observado) {
     ev.decisao = 'observado'; ev.regra = observado.regra; ev.motivo = observado.motivo;
   } else if (ignorado) {
@@ -497,6 +545,10 @@ async function guardar(request: Request, ctx: Ctx | undefined, opcoes: Opcoes | 
     ev.decisao = excecao.decisao || 'liberado'; ev.regra = excecao.regra; ev.motivo = excecao.motivo;
   }
   ev.consulta = corta(redigirConsulta(consulta), 300) || '';
+  if (rede) {
+    marcarRede(ev, rede);
+    if (rede.decisao === 'bloqueado') return foraDaRede(ev, rede.portal, cs, ctx);
+  }
   ev.motivo = corta(ev.motivo, 200);
   registrar(ev, cs, ctx);
   return null;
@@ -526,6 +578,29 @@ async function barrar(ev: Evento, a: Achado, consulta: string, cs: Cred[], ctx: 
   return new Response(paginaBloqueio(cod), { status: 403, headers: base });
 }
 
+// 1.3.0: fora da rede da Lube (modo exigir). Sem código de incidente e sem IP: o TI acha a pessoa em
+// "Tentativas de fora". Nunca bloqueia o IP (nem aqui nem na central) e nunca mexe em cookie.
+// Página (GET/HEAD, inclusive no iframe do portal) → HTML; API, arquivo e outros métodos → JSON.
+function foraDaRede(ev: Evento, portal: string, cs: Cred[], ctx: Ctx | undefined): Response {
+  ev.decisao = 'bloqueado';
+  ev.motivo = corta(ev.motivo, 200);
+  registrar(ev, cs, ctx);
+  const base: Record<string, string> = {
+    'cache-control': 'no-store',
+    'x-robots-tag': 'noindex',
+    'x-sentinela': 'rede',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  };
+  if (ev.tipo === 'pagina' && (ev.metodo === 'GET' || ev.metodo === 'HEAD')) {
+    base['content-type'] = 'text/html; charset=utf-8';
+    base['content-security-policy'] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+    return new Response(paginaForaDaRede(portal), { status: 403, headers: base });
+  }
+  base['content-type'] = 'application/json; charset=utf-8';
+  return new Response(JSON.stringify({ erro: 'fora_da_rede', mensagem: MSG_FORA_DA_REDE, portal }), { status: 403, headers: base });
+}
+
 function semLogin(ev: Evento, lista: Lista, h: Headers, metodo: string, tipo: Tipo, observado: Achado | null,
                   sessaoInvalida: boolean, cs: Cred[], ctx: Ctx | undefined): Response {
   const s = lista.sistema as Sistema;
@@ -550,7 +625,7 @@ function semLogin(ev: Evento, lista: Lista, h: Headers, metodo: string, tipo: Ti
 }
 
 async function trocarPasse(ev: Evento, url: URL, passe: { valor: string; resto: string }, h: Headers,
-                           cs: Cred[], ctx: Ctx | undefined): Promise<Response> {
+                           cs: Cred[], ctx: Ctx | undefined, lista: Lista | null, pr: PedidoRede): Promise<Response> {
   const limpa = url.origin + url.pathname + passe.resto;
   let sessao: string | null = null;
   let email: string | null = null;
@@ -566,12 +641,29 @@ async function trocarPasse(ev: Evento, url: URL, passe: { valor: string; resto: 
   ev.consulta = corta(redigirConsulta(passe.resto), 300) || '';
   const site = atributosCookie(h);
   if (sessao) {
+    if (email) { ev.identidade = email; ev.identidade_origem = 'passe'; }
+    // 1.3.0: fora da rede da Lube, a sessão só é entregue a quem pode entrar de fora. Barrado: 403 sem
+    // nenhum Set-Cookie (nem a marca de falha). Só acontece com passe pego dentro e usado fora em 90 s,
+    // ou se a central viu outro IP; quem barra primeiro é a central, que não emite o passe.
+    const rede = await regraRede(lista, {
+      ip: pr.ip, semIpVercel: pr.semIpVercel, caminho: pr.caminho, caminhoDec: pr.caminhoDec,
+      identidade: true, email, maquina: false,
+    }, cs, ctx);
+    if (rede && rede.decisao === 'bloqueado') {
+      ev.regra = rede.regra;
+      ev.motivo = rede.motivo + ' · passe trocado, sessão não entregue';
+      return foraDaRede(ev, rede.portal, cs, ctx);
+    }
     headers.append('set-cookie', COOKIE_SESSAO + '=' + sessao + '; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=28800');
     if (lerCookie(h.get('cookie'), COOKIE_FALHA)) headers.append('set-cookie', COOKIE_FALHA + '=; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=0');
     ev.decisao = 'liberado';
     ev.regra = null;
     ev.motivo = 'entrada pelo Painel Lube';
-    if (email) { ev.identidade = email; ev.identidade_origem = 'passe'; }
+    if (rede) {
+      ev.decisao = rede.decisao;
+      ev.regra = rede.regra;
+      ev.motivo = corta(rede.motivo + ' · entrada pelo Painel Lube', 200);
+    }
   } else {
     headers.append('set-cookie', COOKIE_FALHA + '=1; Path=/; HttpOnly; Secure; ' + site + '; Max-Age=60');
     ev.decisao = 'observado';
@@ -596,6 +688,7 @@ function atributosCookie(h: Headers): string {
 
 async function saude(h: Headers, ipTxt: string, cs: Cred[], ctx: Ctx | undefined): Promise<Response> {
   const lista = await obterLista(cs, ctx);
+  const rede = lista ? redeDe(lista) : null;
   const corpo = {
     guarda: VERSAO,
     runtime: RUNTIME,
@@ -604,6 +697,11 @@ async function saude(h: Headers, ipTxt: string, cs: Cred[], ctx: Ctx | undefined
       ok: !!lista,
       idade_s: lista ? Math.max(0, Math.round((Date.now() - lista.em) / 1000)) : null,
       modo: lista ? lista.modo : null,
+      // 1.3.0: só o modo de rede que este guarda aplica (nunca as redes nem os liberados) e a idade do
+      // bloco: lista nova sem o bloco (central antiga, RPC fora) mantém o último por até 24 h, e é por
+      // aqui que se vê isso (idade do bloco crescendo com a da lista em segundos)
+      rede: rede ? modoEfetivo(rede) : null,
+      rede_idade_s: rede ? Math.max(0, Math.round((Date.now() - rede.em) / 1000)) : null,
     },
     ip: ipTxt || null,
     pais: h.get('x-vercel-ip-country'),
@@ -633,6 +731,35 @@ function paginaBloqueio(cod: string): string {
     '<p>Esta requisição foi barrada por segurança.</p>' +
     '<div class="k">' + esc(cod) + '</div>' +
     '<p>Se você é da Lube, envie este código ao TI: <a href="mailto:cpd@lube.com.br">cpd@lube.com.br</a></p>' +
+    '<div class="m">Lube Distribuidora · Sentinela</div>' +
+    '</div></main></body></html>';
+}
+
+// 1.3.0: mesmo visual da página de bloqueio, ícone âmbar (não é ataque), sem código e sem IP.
+// "Voltar" sai do iframe do portal (target _top) para não abrir o portal dentro dele mesmo.
+function paginaForaDaRede(portal: string): string {
+  return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">' +
+    '<title>Fora da rede da Lube · Sentinela Lube</title><style>' +
+    'html,body{margin:0;min-height:100%;background:#050b1c;color:#e8edf8;font:500 16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}' +
+    'main{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;box-sizing:border-box}' +
+    '.c{max-width:440px;width:100%;background:#0d1830;border:1px solid #1d2b55;border-radius:18px;padding:32px 24px;text-align:center;box-shadow:0 0 70px rgba(255,179,64,.12)}' +
+    '.s{width:56px;height:56px;margin:0 auto 16px;border-radius:16px;background:rgba(255,179,64,.14);display:flex;align-items:center;justify-content:center}' +
+    'h1{font-size:20px;line-height:1.3;margin:0 0 8px;font-weight:800}' +
+    'p{margin:8px 0;color:#a9b4d0}' +
+    'a{color:#5fb2ff}' +
+    '.d{margin-top:14px;font-size:14px;line-height:1.5;color:#7f8bab}' +
+    '.b{display:inline-block;margin:18px 0 4px;padding:11px 18px;border-radius:10px;background:#132242;border:1px solid #24365f;color:#fff;font-weight:700;text-decoration:none}' +
+    '.b:hover,.b:focus-visible{background:#1a2d55}' +
+    '.m{margin-top:20px;font-size:12px;color:#5d6a8c;letter-spacing:.08em;text-transform:uppercase}' +
+    '</style></head><body><main><div class="c">' +
+    '<div class="s"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffb340" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h11"/><path d="M5 21V5l7-2v18"/><path d="M8 8h1M8 12h1M8 16h1"/><path d="M15.5 8.5a6 6 0 0 1 6 0"/><path d="M17 11.3a3 3 0 0 1 3 0"/><path d="M18.5 14h.01"/><path d="M15 6l7 10"/></svg></div>' +
+    '<h1>Este sistema só abre na rede da Lube</h1>' +
+    '<p>Você está fora da empresa.</p>' +
+    '<p>Se precisa acessar, fale com o TI: <a href="mailto:cpd@lube.com.br">cpd@lube.com.br</a></p>' +
+    '<p class="d">Está na Lube? Use o Wi-Fi da empresa (no celular, desligue os dados móveis e a VPN) e recarregue a página. ' +
+    'Se o TI acabou de liberar você, espere 1 minuto e recarregue.</p>' +
+    '<a class="b" href="' + esc(portal + '/') + '" target="_top">Voltar ao Painel Lube</a>' +
     '<div class="m">Lube Distribuidora · Sentinela</div>' +
     '</div></main></body></html>';
 }
@@ -706,7 +833,12 @@ function compilarLista(d: any): Lista {
     jwks: Array.isArray(d.chaves) ? d.chaves.filter((k: any) => k && typeof k === 'object') : [],
     chaves: new Map(),
     sessoes: new Map(),
+    rede: null,
   };
+  // 1.3.0: rede da Lube. Lista sem o bloco (central antiga, RPC fora) fica com o último por até 24 h.
+  const rede = lerRedeLube(d.rede, l.em);
+  if (rede) ultimaRede = rede;
+  l.rede = rede || redeGuardada(l.em);
   const empilhar = (m: Map<string, Bloq[]>, k: string, b: Bloq) => { const a = m.get(k); if (a) a.push(b); else m.set(k, [b]); };
   for (const x of Array.isArray(d.bloqueios) ? d.bloqueios : []) {
     try {
@@ -752,9 +884,14 @@ function compilarLista(d: any): Lista {
 
 // Lista mínima do modo fechado: sem bloqueios nem confiáveis, só o exige_login e as chaves
 // fixas. Nunca vai para o cache: a lista de verdade continua sendo buscada.
+// Rede (1.3.0): partida a frio não conhece as redes (sem regra de rede); uma instância que já
+// recebeu o bloco "rede" continua com ele por até 24 h (as liberações, velhas, não valem).
 let reserva: Lista | null = null;
 function listaReserva(f: Fechado): Lista {
-  if (reserva && reserva.sistema && reserva.sistema.projeto === f.projeto) return reserva;
+  if (reserva && reserva.sistema && reserva.sistema.projeto === f.projeto) {
+    reserva.rede = redeGuardada(Date.now());
+    return reserva;
+  }
   const chaves = Array.isArray(f.chaves) && f.chaves.length ? f.chaves : CHAVES_FIXAS;
   reserva = {
     em: Date.now(), ttl: TTL_LISTA, modo: 'observar', portal: PORTAL_PADRAO,
@@ -764,6 +901,7 @@ function listaReserva(f: Fechado): Lista {
       rotas: Array.isArray(f.rotas) ? f.rotas.filter((x: any) => typeof x === 'string' && x) : [],
     },
     jwks: chaves.filter((k: any) => k && typeof k === 'object'), chaves: new Map(), sessoes: new Map(),
+    rede: redeGuardada(Date.now()),
   };
   return reserva;
 }
@@ -779,6 +917,159 @@ function bloquearLocal(ip: Ip, agora: number): void {
   bloqLocal.delete(k);
   bloqLocal.set(k, agora + BLOQ_LOCAL_MS);
   limitar(bloqLocal, BLOQ_LOCAL_MAX);
+}
+
+/* =========================================================
+   Rede da Lube (1.3.0, docs/SENTINELA-REDE.md §6)
+   A central manda, por sistema: o modo (desligado | observar | exigir), as redes da Lube
+   (cadastradas pelo TI; nada a ver com as "confiáveis", aprendidas pelo login) e o SHA-256 do
+   e-mail de quem o TI liberou fora da rede, com o fim da liberação. A regra roda no fim, só
+   para quem ia passar, e confere a rede A CADA PEDIDO: sessão pega na empresa e levada para
+   casa não vale fora. Nunca bloqueia IP, nunca pede bloqueio à central, nunca mexe em cookie.
+   ========================================================= */
+// Bloco "rede" da lista. Inválido ou ausente → null (vale a última, §6.2). Modo desconhecido →
+// observar. Rede inválida ou mais larga que /24 (IPv4) ou /48 (IPv6) é ignorada: a central recusa
+// essas faixas, e aqui elas abririam a regra para outros clientes da operadora.
+function lerRedeLube(x: any, em: number): RedeLube | null {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  const modo: ModoRede = x.modo === 'desligado' || x.modo === 'exigir' ? x.modo : 'observar';
+  const r: RedeLube = { modo, em, vazia: true, ips: new Set(), faixas: [], liberados: new Map() };
+  let n = 0;
+  for (const v of Array.isArray(x.redes) ? x.redes : []) {
+    if (n >= REDES_MAX) break;
+    try {
+      if (typeof v !== 'string') continue;
+      const rd = lerRede(v);
+      if (!rd || rd.bits < (rd.v === 4 ? 24 : 48)) continue;
+      n++;
+      if (rd.bits === (rd.v === 4 ? 32 : 128)) r.ips.add(rd.v + ':' + rd.rede.toString(16));
+      else r.faixas.push(rd);
+    } catch { /* ignora */ }
+  }
+  r.vazia = n === 0;
+  let k = 0;
+  for (const y of Array.isArray(x.liberados) ? x.liberados : []) {
+    if (k >= LIBERADOS_MAX) break;
+    try {
+      if (!y || typeof y.h !== 'string' || !/^[0-9a-f]{64}$/i.test(y.h) || typeof y.ate !== 'string') continue;
+      const ate = Date.parse(y.ate);
+      if (!Number.isFinite(ate)) continue;
+      k++;
+      const h = y.h.toLowerCase();
+      const ja = r.liberados.get(h);
+      if (ja === undefined || ate > ja) r.liberados.set(h, ate);
+    } catch { /* ignora */ }
+  }
+  return r;
+}
+
+function redeGuardada(agora: number): RedeLube | null {
+  return ultimaRede && agora - ultimaRede.em < REDE_GUARDADA ? ultimaRede : null;
+}
+
+// o bloco que vale para esta lista: o dela, ou o último recebido, enquanto tiver menos de 24 h
+// (conferido no uso: a lista fica até 1 h no cache e não pode esticar o prazo)
+function redeDe(l: Lista): RedeLube | null {
+  const r = l.rede;
+  return r && Date.now() - r.em < REDE_GUARDADA ? r : null;
+}
+
+// exigir sem nenhuma rede válida vira observar: lista vazia não tranca a empresa
+function modoEfetivo(r: RedeLube): ModoRede {
+  return r.modo === 'exigir' && r.vazia ? 'observar' : r.modo;
+}
+
+function naRede(r: RedeLube, ip: Ip): boolean {
+  if (r.ips.has(chaveIp(ip))) return true;
+  for (const f of r.faixas) if (contem(f, ip)) return true;
+  return false;
+}
+
+function ehMaquina(id: any): boolean {
+  return !!(id && id.maquina === true && id.origem === 'sessao_app' && typeof id.email === 'string' &&
+    RE_MAQUINA.test(id.email.toLowerCase()));
+}
+
+// A regra vale para este pedido? Não vale: modo desligado ou sem bloco, /.sentinela/* (o Guardião
+// confere a saúde de fora), IP numa rede da Lube, ou sem identidade no portal (sistema sem slug: a
+// tela de login sempre abre). Num sistema com slug, quem não tem login também passa pela regra,
+// mesmo com o "exige login" desligado: desligar o login de um sistema não o abre para fora da rede.
+function redeVale(l: Lista, p: PedidoRede): boolean {
+  const r = redeDe(l);
+  if (!r || r.modo === 'desligado') return false;
+  if (p.caminho.startsWith(PREFIXO_SENTINELA) && p.caminhoDec.startsWith(PREFIXO_SENTINELA)) return false;
+  if (p.ip && naRede(r, p.ip)) return false;
+  if (!p.identidade && !(l.sistema && l.sistema.slug)) return false;
+  return true;
+}
+
+// null = nada a fazer (o pedido segue como no 1.2.0). Senão: liberado (máquina ou pessoa liberada),
+// observado (modo observar) ou bloqueado (modo exigir). IP vazio ou inválido = fora.
+async function regraRede(lista: Lista | null, p: PedidoRede, cs: Cred[], ctx: Ctx | undefined): Promise<AchadoRede | null> {
+  let l = lista;
+  if (!l || !redeVale(l, p)) return null;
+  // lista de mais de 2 min (instância parada): modo, redes e liberações podem ter mudado; espera a
+  // renovação (a reserva do modo fechado só existe porque a central não respondeu). Só paga essa
+  // espera quem está fora da rede, num pedido que a regra vai decidir.
+  if (l !== reserva && Date.now() - l.em > REDE_FRESCA) {
+    const nova = await esperarLista(cs, ctx);
+    if (nova) {
+      l = nova;
+      if (!redeVale(l, p)) return null;
+    }
+  }
+  const r = redeDe(l);
+  if (!r) return null;
+  const portal = l.portal;
+  const achado = (regra: string, decisao: Decisao, motivo: string): AchadoRede => ({ regra, nivel: null, motivo, decisao, portal });
+  if (p.maquina) return achado('rede_maquina', 'liberado', 'fora da rede da Lube: máquina autenticada pelo sistema');
+  // liberação só com a rede da lista de até 2 min: encerrar no painel chega aqui em ~30 s
+  if (p.email && r.liberados.size && Date.now() - r.em <= REDE_FRESCA) {
+    const ate = r.liberados.get(await hashEmail(p.email));
+    if (ate !== undefined && ate > Date.now()) {
+      return achado('rede_liberado', 'liberado', 'fora da rede da Lube · liberado pelo TI até ' + new Date(ate).toISOString());
+    }
+  }
+  const semIp = p.ip ? '' : p.semIpVercel ? ' · IP sem x-real-ip' : ' · sem IP';
+  return modoEfetivo(r) === 'exigir'
+    ? achado('fora_da_rede', 'bloqueado', 'fora da rede da Lube' + semIp)
+    : achado('fora_da_rede', 'observado', 'seria bloqueado: fora da rede da Lube' + semIp);
+}
+
+// espera a lista nova pelo prazo inteiro da central (TEMPO_CENTRAL, como a partida a frio do modo
+// fechado): com só 700 ms, uma central fria à noite fazia o liberado levar o 403 e passar ao
+// recarregar. O voo que sobra vai para o waitUntil.
+async function esperarLista(cs: Cred[], ctx: Ctx | undefined): Promise<Lista | null> {
+  if (!cs.some(credUsavel)) return null;
+  const p = renovar(cs);
+  const r = await comLimite(p, TEMPO_CENTRAL);
+  if (r === ESTOUROU) { emFundo(ctx, p); return null; }
+  return r;
+}
+
+// A regra do evento passa a ser a da rede (é por ela que "Tentativas de fora" acha o acesso); o
+// que já estava marcado vai no motivo. O agendador da Vercel autenticado continua "cron".
+function marcarRede(ev: Evento, a: AchadoRede): void {
+  if (a.regra === 'rede_maquina' && ev.regra === 'cron') {
+    ev.motivo = (ev.motivo || '') + ' · ' + a.motivo;
+    return;
+  }
+  const antes = ev.regra ? ' · também ' + ev.regra + ': ' + (ev.motivo || '') : '';
+  ev.decisao = a.decisao;
+  ev.regra = a.regra;
+  ev.motivo = a.motivo + antes;
+}
+
+// SHA-256 hex do e-mail em minúsculas, igual ao sentinela.email_hash da central
+function hashEmail(email: string): Promise<string> {
+  const k = email.trim().toLowerCase();
+  let p = hashes.get(k);
+  if (!p) {
+    p = sha256Hex(k);
+    hashes.set(k, p);
+    limitar(hashes, HASHES_MAX);
+  }
+  return p;
 }
 
 /* =========================================================
