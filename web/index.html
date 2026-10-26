@@ -162,6 +162,9 @@ button,input,select{font-family:inherit;font-weight:600;}
 .sync{display:flex;align-items:center;gap:9px;background:rgba(5,11,28,.55);border:1px solid var(--line-1);border-radius:12px;padding:9px 13px;font-size:12px;color:var(--txt-3);font-weight:600;}
 .sync b{color:var(--txt-1);font-family:"JetBrains Mono";font-weight:700;font-size:12px;}
 .ponto{width:7px;height:7px;border-radius:50%;background:var(--bom);box-shadow:0 0 10px var(--bom);animation:pulsar 2.6s ease-in-out 4 both;flex:none;}
+/* ao vivo: pulsa sem parar; agente fora do ar: cinza e parado */
+.ponto.vivo{animation:pulsar 2.6s ease-in-out infinite both;}
+.ponto.parado{background:var(--txt-3);box-shadow:none;animation:none;}
 .btn-topo{
   display:inline-flex;align-items:center;gap:8px;background:var(--surface-3);border:1px solid var(--line-2);
   color:var(--txt-1);border-radius:12px;padding:10px 15px;font-size:13px;font-weight:700;cursor:pointer;
@@ -472,6 +475,7 @@ mark{background:var(--ouro);color:#241900;padding:0 3px;border-radius:4px;font-w
 #carregando button{cursor:pointer;border:1px solid var(--ouro-linha);background:linear-gradient(135deg,#8a6518,#b8892a);color:#fff5dd;font-size:13px;font-weight:800;padding:11px 22px;border-radius:99px;}
 .trabalhando{position:fixed;right:18px;bottom:18px;z-index:35;background:var(--surface-2);border:1px solid var(--ouro-linha);border-radius:13px;padding:10px 16px;font-size:12.5px;font-weight:700;color:var(--ouro-forte);box-shadow:var(--sombra);display:none;}
 .trabalhando.on{display:block;animation:sobe .25s var(--ease) both;}
+.trabalhando.aviso{max-width:min(460px,calc(100vw - 36px));line-height:1.5;}
 
 .rodape{font-size:12px;color:var(--txt-3);text-align:center;line-height:1.8;padding-top:10px;font-weight:500;}
 .rodape b{color:var(--txt-2);font-weight:700;}
@@ -528,11 +532,11 @@ mark{background:var(--ouro);color:#241900;padding:0 3px;border-radius:4px;font-w
         <h1 id="topo-titulo">Central Comercial</h1>
       </div>
       <div class="topbar-right">
-        <div class="sync">
-          <span class="ponto"></span>
-          <span>Última carga <b id="ultima-carga">—</b></span>
+        <div class="sync" id="sync">
+          <span class="ponto" id="sync-ponto"></span>
+          <span><span id="sync-rotulo">Atualizado</span> <b id="ultima-carga">—</b></span>
         </div>
-        <button class="btn-topo" id="btn-atualizar" title="Buscar a carga mais recente do banco">
+        <button class="btn-topo" id="btn-atualizar" title="Ler o WinThor agora (pelo agente da SRV-IA)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
           Atualizar
         </button>

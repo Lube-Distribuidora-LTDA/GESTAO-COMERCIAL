@@ -40,8 +40,9 @@ module.exports = async function handler(req, res) {
     if (!painel) throw new Error("A consulta não devolveu dados.");
 
     // O conteúdo agora vem pronto do banco, então o CDN é só a segunda camada.
-    // O botão "Atualizar" do painel manda ?atualizar=<hora>, que é uma URL
-    // diferente e passa direto pelo CDN até a linha guardada.
+    // Ao vivo, a tela pede ?v=<quando o JSON foi feito> (ver api/versao.js): cada
+    // versão é uma URL própria, então o CDN nunca entrega a anterior. Sem o agente,
+    // o Atualizar manda ?atualizar=<hora>, que também passa direto pelo CDN.
     res.setHeader("Cache-Control", "public, s-maxage=600, stale-while-revalidate=86400");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.status(200).send(JSON.stringify(painel));
