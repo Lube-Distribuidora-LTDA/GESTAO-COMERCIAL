@@ -49,7 +49,7 @@ const REDES_MAX = 1000;             // a central manda no máximo 200; o teto aq
 const LIBERADOS_MAX = 500;
 const HASHES_MAX = 500;
 const PREFIXO_SENTINELA = '/.sentinela/';
-const MSG_FORA_DA_REDE = 'Este sistema só abre na rede da Lube. Você está fora da empresa. Se precisa acessar, fale com o TI.';
+const MSG_FORA_DA_REDE = 'Este sistema só abre na rede da Lube. Este aparelho não está na rede da Lube. Se precisa acessar de fora, fale com o TI.';
 
 // Chave pública ES256 da Sentinela (sentinela.chaves, criada em 2026-10-06). Não é segredo.
 // Serve ao modo "fechado" quando a lista não veio (partida a frio, central fora): sem ela não
@@ -755,9 +755,9 @@ function paginaForaDaRede(portal: string): string {
     '</style></head><body><main><div class="c">' +
     '<div class="s"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffb340" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h11"/><path d="M5 21V5l7-2v18"/><path d="M8 8h1M8 12h1M8 16h1"/><path d="M15.5 8.5a6 6 0 0 1 6 0"/><path d="M17 11.3a3 3 0 0 1 3 0"/><path d="M18.5 14h.01"/><path d="M15 6l7 10"/></svg></div>' +
     '<h1>Este sistema só abre na rede da Lube</h1>' +
-    '<p>Você está fora da empresa.</p>' +
-    '<p>Se precisa acessar, fale com o TI: <a href="mailto:cpd@lube.com.br">cpd@lube.com.br</a></p>' +
-    '<p class="d">Está na Lube? Use o Wi-Fi da empresa (no celular, desligue os dados móveis e a VPN) e recarregue a página. ' +
+    '<p>Este aparelho não está na rede da Lube.</p>' +
+    '<p>Se precisa acessar de fora, fale com o TI: <a href="mailto:cpd@lube.com.br">cpd@lube.com.br</a></p>' +
+    '<p class="d">Na Lube, use o Wi-Fi da empresa (no celular, desligue os dados móveis e a VPN) e recarregue a página. ' +
     'Se o TI acabou de liberar você, espere 1 minuto e recarregue.</p>' +
     '<a class="b" href="' + esc(portal + '/') + '" target="_top">Voltar ao Painel Lube</a>' +
     '<div class="m">Lube Distribuidora · Sentinela</div>' +
