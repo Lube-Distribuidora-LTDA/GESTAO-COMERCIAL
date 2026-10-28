@@ -526,11 +526,37 @@ function chipsMultiplos(rotulo, opcoes, conjunto, aoMudar) {
   return g;
 }
 
+var buscaTimer = null;
+
 function campoBusca(placeholder) {
   var b = el("div", "busca");
   var i = el("input");
+  i.id = "campo-busca";          /* o id e o que devolve o foco depois do redesenho */
   i.type = "search"; i.placeholder = placeholder; i.value = E.busca;
-  i.addEventListener("input", function () { E.busca = i.value.trim().toLowerCase(); desenhar(true); });
+
+  /* Cada tecla chamava desenhar(), que reconstroi a pagina inteira — e a
+     propria caixa junto. Resultado: depois da primeira letra o campo sumia,
+     o foco ia para o body e o resto do que a pessoa digitava caia no vazio.
+     Digitar "rodrigo" deixava "r" na tela.
+
+     Agora o estado muda na hora (o filtro nao atrasa), mas o redesenho espera
+     a pessoa parar de digitar. E, quando ele acontece, desenhar() devolve o
+     foco e a posicao do cursor — ver o fim daquela funcao. */
+  i.addEventListener("input", function () {
+    E.busca = i.value.trim().toLowerCase();
+    clearTimeout(buscaTimer);
+    buscaTimer = setTimeout(function () { desenhar(true); }, 180);
+  });
+
+  /* Esc limpa a busca, como em qualquer campo de procura. */
+  i.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && i.value) {
+      ev.preventDefault();
+      i.value = ""; E.busca = "";
+      clearTimeout(buscaTimer);
+      desenhar(true);
+    }
+  });
   var l = el("button", "btn-limpar", "Limpar filtros");
   l.type = "button";
   l.addEventListener("click", function () {
@@ -2332,6 +2358,18 @@ function contagemDoFiltro() {
 
 function desenhar(manterRolagem) {
   var y = window.scrollY;
+
+  /* Quem estava digitando continua digitando. O redesenho troca os elementos
+     por outros novos, entao guardamos QUEM tinha o foco (pelo id) e onde
+     estava o cursor, para devolver no fim. Vale para a busca, para as datas e
+     para qualquer campo que ganhe um id. */
+  var antes = document.activeElement;
+  var focoId = (antes && antes.id) ? antes.id : null;
+  var selIni = null, selFim = null;
+  if (focoId) {
+    try { selIni = antes.selectionStart; selFim = antes.selectionEnd; } catch (e) {}
+  }
+
   var raiz = limpar(document.getElementById("pagina"));
 
   var pg = PAGINAS.filter(function (p) { return p.id === E.pagina; })[0] || PAGINAS[0];
@@ -2365,6 +2403,18 @@ function desenhar(manterRolagem) {
 
   desenharMenu();
   if (manterRolagem) window.scrollTo(0, y);
+
+  if (focoId) {
+    var depois = document.getElementById(focoId);
+    if (depois && depois !== document.activeElement) {
+      try { depois.focus({ preventScroll: true }); } catch (e) { depois.focus(); }
+      if (selIni != null && depois.setSelectionRange) {
+        /* input type=search nao aceita setSelectionRange em alguns
+           navegadores; se recusar, o foco sozinho ja resolve o essencial */
+        try { depois.setSelectionRange(selIni, selFim); } catch (e) {}
+      }
+    }
+  }
 }
 
 function desenharMenu() {
