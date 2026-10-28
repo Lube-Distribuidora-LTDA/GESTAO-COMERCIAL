@@ -284,6 +284,15 @@ button,input,select{font-family:inherit;font-weight:600;}
    como uma linha, e não como quatro alturas diferentes */
 .kpi .val{font-family:"JetBrains Mono";font-size:23px;font-weight:800;letter-spacing:-.05em;
   line-height:1.15;white-space:nowrap;align-self:start;}
+/* Valor exato: o número inteiro, com centavos. Corpo menor porque
+   R$ 11.297.340,01 tem 16 caracteres e não cabe nos 23px do número curto.
+   Pedido do Júlio em 2026-10-28: "mostrar o valor real mesmo, não pode ter
+   regra de aproximação" — numa tela de conferência, abreviar esconde o que se
+   veio conferir. */
+.kpi .val.exato{font-size:17px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
+.kpis.exatos{grid-template-columns:repeat(auto-fit,minmax(206px,1fr));}
+/* o bloco ao lado do herói continua 2x2: só o corpo do número muda */
+.heroi-card .valor.exato{font-size:clamp(26px,3.1vw,40px);letter-spacing:-.03em;}
 .kpi .sub{font-size:11.5px;color:var(--txt-3);font-weight:600;line-height:1.45;align-self:start;}
 .kpi.bom .val{color:var(--bom);} .kpi.grave .val{color:var(--grave);}
 .kpi.atencao .val{color:var(--atencao);} .kpi.info .val{color:var(--info);}

@@ -407,7 +407,7 @@ function heroi(cfg) {
   var g = el("div", "heroi sobe");
   var card = el("div", "heroi-card");
   card.appendChild(el("div", "rot", cfg.rotulo));
-  var v = el("div", "valor");
+  var v = el("div", "valor" + (cfg.exato ? " exato" : ""));
   card.appendChild(v);
   animarNumero(v, "heroi_" + E.pagina, cfg.valor, cfg.formatar || fCurto);
   if (cfg.sub) {
@@ -417,13 +417,14 @@ function heroi(cfg) {
   }
   g.appendChild(card);
   var lado = el("div", "heroi-lado");
-  blocoKpis(cfg.kpis, lado);
+  blocoKpis(cfg.kpis, lado, cfg.exato);
   g.appendChild(lado);
   return g;
 }
 
-function blocoKpis(defs, destino) {
+function blocoKpis(defs, destino, exatos) {
   var g = destino || el("div", "kpis");
+  if (exatos) g.classList.add("exatos");
   defs.forEach(function (d, i) {
     var k = el("div", "kpi sobe " + (d.tom || ""));
     k.style.animationDelay = Math.min(i * 45, 320) + "ms";
@@ -435,7 +436,9 @@ function blocoKpis(defs, destino) {
       lbl.appendChild(a);
     }
     k.appendChild(lbl);
-    var v = el("div", "val");
+    /* "exato" = o valor inteiro, com centavos, sem R$ 13,82 mi. Vem num corpo
+       menor porque R$ 11.297.340,01 nao cabe no tamanho do numero curto. */
+    var v = el("div", "val" + (d.exato ? " exato" : ""));
     if (d.numero != null && d.formatar) {
       animarNumero(v, E.pagina + "_" + d.rotulo, d.numero, d.formatar);
     } else {
@@ -1462,24 +1465,29 @@ function paginaComissaoSt(raiz) {
   var somaSt = itens.reduce(function (t, i) { return t + i.st; }, 0);
 
   /* ---------- os três cards da tela original ---------- */
+  /* Esta é uma tela de conferência: quem a usa vai comparar centavo a centavo
+     com o Power BI e com o fechamento. Número abreviado ("R$ 13,82 mi") não
+     serve — esconde justamente o que se veio conferir. Aqui vai o valor
+     inteiro, sem arredondar nada. */
   raiz.appendChild(heroi({
     rotulo: "Comissão a pagar no período",
     valor: somaRca,
-    formatar: fCurto,
+    formatar: fR$,
+    exato: true,
     sub: "Soma vendedor a vendedor, em <b>" + fInt(itens.length) + "</b> RCAs. " +
          "A faixa de cada um sai da margem dele — por isso o total <b>não</b> é a faixa da " +
          "empresa (" + fPct(empresa.perc, 2) + ") aplicada ao total.",
     kpis: [
-      { rotulo: "Total líquido", numero: somaM6, formatar: fCurto, titulo: fR$(somaM6),
+      { rotulo: "Total líquido", numero: somaM6, formatar: fR$, exato: true,
         tom: "info", sub: "venda sem ST menos devolução sem ST",
         ajuda: "É o TOTAL LIQUIDO da tela e o denominador do % líquido. Não é a base da comissão." },
-      { rotulo: "Total ST", numero: somaSt, formatar: fCurto, titulo: fR$(somaSt),
+      { rotulo: "Total ST", numero: somaSt, formatar: fR$, exato: true,
         tom: "atencao", sub: "substituição tributária no período" },
-      { rotulo: "Total + ST", numero: soma44 + somaSt, formatar: fCurto, titulo: fR$(soma44 + somaSt),
+      { rotulo: "Total + ST", numero: soma44 + somaSt, formatar: fR$, exato: true,
         tom: "roxo", sub: "base da comissão mais o ST",
         ajuda: "Soma o ST à base que paga a comissão, que usa a devolução COM ST. " +
                "Por isso Total líquido + Total ST não dá exatamente este número." },
-      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fCurto, titulo: fR$(empresa.massa),
+      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fR$, exato: true,
         tom: "bom", sub: "total líquido menos CMV líquido" }
     ]
   }));
