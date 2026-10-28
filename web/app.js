@@ -143,6 +143,13 @@ function animarNumero(alvo, chave, valor, formatar) {
   if (semMovimento || valor == null || isNaN(valor)) { alvo.textContent = formatar(valor); return; }
   var de = (anterior == null || isNaN(anterior)) ? 0 : anterior;
   if (de === valor) { alvo.textContent = formatar(valor); return; }
+
+  /* Escreve o valor final ANTES de animar. requestAnimationFrame nao dispara
+     com a aba em segundo plano: sem isto, quem abre o painel numa aba que nao
+     esta na frente encontra os numeros em BRANCO ate clicar nela. Com isto, o
+     numero certo ja esta la e a animacao so enfeita quando ha tela para ver. */
+  alvo.textContent = formatar(valor);
+
   var t0 = null, dur = 900;
   function passo(agora) {
     if (t0 == null) t0 = agora;
@@ -918,7 +925,7 @@ function tabela(cfg) {
     cfg.totais(linhas).forEach(function (t) {
       var c = el("div", "t" + (t.destaque ? " destaque" : ""));
       c.appendChild(el("div", "k", t.rotulo));
-      var v = el("div", "v");
+      var v = el("div", "v" + (t.exato ? " exato" : ""));
       if (t.numero != null && t.formatar) animarNumero(v, chave + "_tot_" + t.rotulo, t.numero, t.formatar);
       else v.textContent = t.valor;
       c.appendChild(v);
@@ -1174,21 +1181,21 @@ function paginaComissao(raiz) {
   raiz.appendChild(heroi({
     rotulo: "Comissão a pagar no período",
     valor: somaGrao,
-    formatar: fCurto,
+    formatar: fR$, exato: true,
     sub: "Soma das comissões calculadas por <b>" + (E.grao === "rca" ? "RCA" : "RCA × filial") + "</b>, " +
          "sobre <b>" + fCurto(empresa.totalLiquido) + "</b> de total líquido e " +
-         "<b>" + fPct(empresa.perc, 2) + "</b> de margem." +
+         "<b>" + fPct(empresa.perc, 4) + "</b> de margem." +
          (variacao != null ? " No último mês fechado a comissão variou <b>" + fPct(variacao, 1) + "</b> contra o mês anterior." : ""),
     kpis: [
-      { rotulo: "Total líquido", numero: empresa.totalLiquido, formatar: fCurto, titulo: fR$(empresa.totalLiquido),
+      { rotulo: "Total líquido", numero: empresa.totalLiquido, formatar: fR$, exato: true,
         tom: "info", sub: "venda sem ST menos devolução",
         ajuda: "É a base sobre a qual a comissão é paga: venda sem ST menos a devolução do período." },
-      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fCurto, titulo: fR$(empresa.massa),
+      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fR$, exato: true,
         tom: "bom", sub: "total líquido menos CMV líquido" },
-      { rotulo: "Margem líquida", numero: empresa.perc, formatar: function (v) { return fPct(v, 2); },
+      { rotulo: "Margem líquida", numero: empresa.perc, formatar: function (v) { return fPct(v, 4); },
         tom: "roxo", sub: "do conjunto filtrado",
         ajuda: "A margem do total. Cada vendedor tem a margem dele, e é ela que define a faixa dele." },
-      { rotulo: "ST no período", numero: empresa.st, formatar: fCurto, titulo: fR$(empresa.st),
+      { rotulo: "ST no período", numero: empresa.st, formatar: fR$, exato: true,
         tom: "atencao", sub: "substituição tributária em " + fInt(itens.length) + " vendedores" }
     ]
   }));
@@ -1255,7 +1262,7 @@ function paginaComissao(raiz) {
     { titulo: "Massa", num: true, tipo: "moeda", valor: function (r) { return r.massa; },
       celula: function (r) { return fR$(r.massa); } },
     { titulo: "Margem", num: true, tipo: "percentual", valor: function (r) { return r.perc; },
-      celula: function (r) { return fPct(r.perc, 2); } },
+      celula: function (r) { return fPct(r.perc, 4); } },
     { titulo: "Faixa", num: true, tipo: "percentual", valor: function (r) { return r.faixa * 100; },
       celula: function (r) {
         return el("span", "selo " + (r.faixa >= 0.03 ? "bom" : r.faixa <= 0.01 ? "grave" : "atencao"), fPct(r.faixa * 100, 2));
@@ -1307,10 +1314,10 @@ function paginaComissao(raiz) {
       var tl = soma("totalLiquido"), tlsst = soma("totalLiquidoSst"), massa = soma("massa"), com = soma("comissao");
       return [
         { rotulo: "Vendedores", numero: todas.length, formatar: fInt },
-        { rotulo: "Total líquido", numero: tl, formatar: fCurto, sub: fR$(tl) },
-        { rotulo: "Massa de margem", numero: massa, formatar: fCurto },
-        { rotulo: "Margem", numero: tlsst ? massa / tlsst * 100 : 0, formatar: function (v) { return fPct(v, 2); } },
-        { rotulo: "Comissão a pagar", numero: com, formatar: fCurto, destaque: true, sub: fR$(com) },
+        { rotulo: "Total líquido", numero: tl, formatar: fR$, exato: true },
+        { rotulo: "Massa de margem", numero: massa, formatar: fR$, exato: true },
+        { rotulo: "Margem", numero: tlsst ? massa / tlsst * 100 : 0, formatar: function (v) { return fPct(v, 4); } },
+        { rotulo: "Comissão a pagar", numero: com, formatar: fR$, exato: true, destaque: true },
         { rotulo: "Notas", numero: soma("notas"), formatar: fInt }
       ];
     },
@@ -1341,7 +1348,7 @@ function abrirNotasDoRca(r) {
   var corpo = abrirModal("Detalhe por nota fiscal", r.nome, [
     ["Período", fData(E.de) + " a " + fData(E.ate)],
     ["Total líquido", fR$(r.totalLiquido)],
-    ["Margem", fPct(r.perc, 2)],
+    ["Margem", fPct(r.perc, 4)],
     ["Comissão", fR$(r.comissao)]
   ], function (corpo) {
     corpo.appendChild(el("div", "vazio", "Buscando as notas no banco…"));
@@ -1384,7 +1391,7 @@ function abrirNotasDoRca(r) {
         { titulo: "Massa", num: true, tipo: "moeda", valor: function (x) { return x.massa; },
           celula: function (x) { return fR$(x.massa); } },
         { titulo: "Margem", num: true, tipo: "percentual", valor: function (x) { return x.perc; },
-          celula: function (x) { return fPct(x.perc, 2); } },
+          celula: function (x) { return fPct(x.perc, 4); } },
         { titulo: "Faixa", num: true, tipo: "percentual", valor: function (x) { return x.faixa * 100; },
           celula: function (x) { return fPct(x.faixa * 100, 2); } },
         { titulo: "Comissão", num: true, tipo: "moeda", valor: function (x) { return x.comissao; },
@@ -1405,9 +1412,9 @@ function abrirNotasDoRca(r) {
         var soma = function (c) { return todas.reduce(function (s, x) { return s + n(x[c]); }, 0); };
         return [
           { rotulo: "Notas", numero: todas.length, formatar: fInt },
-          { rotulo: "Total líquido", numero: soma("totalLiquido"), formatar: fCurto },
-          { rotulo: "Massa de margem", numero: soma("massa"), formatar: fCurto },
-          { rotulo: "Comissão nota a nota", numero: soma("comissao"), formatar: fCurto, destaque: true }
+          { rotulo: "Total líquido", numero: soma("totalLiquido"), formatar: fR$, exato: true },
+          { rotulo: "Massa de margem", numero: soma("massa"), formatar: fR$, exato: true },
+          { rotulo: "Comissão nota a nota", numero: soma("comissao"), formatar: fR$, exato: true, destaque: true }
         ];
       },
       csv: true, porPagina: 25,
@@ -1502,7 +1509,7 @@ function paginaComissaoSt(raiz) {
     exato: true,
     sub: "Soma vendedor a vendedor, em <b>" + fInt(itens.length) + "</b> RCAs. " +
          "A faixa de cada um sai da margem dele — por isso o total <b>não</b> é a faixa da " +
-         "empresa (" + fPct(empresa.perc, 2) + ") aplicada ao total.",
+         "empresa (" + fPct(empresa.perc, 4) + ") aplicada ao total.",
     kpis: [
       { rotulo: "Total líquido", numero: somaM6, formatar: fR$, exato: true,
         tom: "info", sub: "venda sem ST menos devolução sem ST",
@@ -1642,9 +1649,9 @@ function paginaComissaoSt(raiz) {
       var ma = todas.reduce(function (t, l) { return t + l.massa; }, 0);
       return [
         { rotulo: "Vendedores", numero: todas.length, formatar: fInt },
-        { rotulo: "Total líquido", numero: m6, formatar: fCurto, sub: fR$(m6) },
-        { rotulo: "Massa de margem", numero: ma, formatar: fCurto, sub: fR$(ma) },
-        { rotulo: "Comissão a pagar", numero: com, formatar: fCurto, destaque: true, sub: fR$(com) }
+        { rotulo: "Total líquido", numero: m6, formatar: fR$, exato: true },
+        { rotulo: "Massa de margem", numero: ma, formatar: fR$, exato: true },
+        { rotulo: "Comissão a pagar", numero: com, formatar: fR$, exato: true, destaque: true }
       ];
     },
     csv: true, porPagina: 25,
@@ -1692,14 +1699,14 @@ function paginaMargem(raiz) {
   raiz.appendChild(heroi({
     rotulo: "Margem gerada no período",
     valor: n(r.margem_valor),
-    formatar: fCurto,
+    formatar: fR$, exato: true,
     sub: "Sobre <b>" + fCurto(r.venda) + "</b> vendidos em <b>" + fInt(r.itens) + "</b> itens faturados, " +
-         "uma margem média de <b>" + fPct(margemMedia, 2) + "</b>. " +
+         "uma margem média de <b>" + fPct(margemMedia, 4) + "</b>. " +
          "<b>" + fInt(abaixo) + "</b> itens saíram abaixo de " + limite + "%.",
     kpis: [
-      { rotulo: "Venda no período", numero: n(r.venda), formatar: fCurto, titulo: fR$(r.venda), tom: "info",
+      { rotulo: "Venda no período", numero: n(r.venda), formatar: fR$, exato: true, tom: "info",
         sub: fInt(r.itens) + " itens faturados" },
-      { rotulo: "Margem média", numero: margemMedia, formatar: function (v) { return fPct(v, 2); }, tom: "bom",
+      { rotulo: "Margem média", numero: margemMedia, formatar: function (v) { return fPct(v, 4); }, tom: "bom",
         sub: "no conjunto do período" },
       { rotulo: "Abaixo de " + limite + "%", numero: n(abaixo), formatar: fInt, tom: "atencao",
         sub: r.itens ? fPct(n(abaixo) / n(r.itens) * 100, 1) + " dos itens" : "—" },
@@ -1759,7 +1766,7 @@ function paginaMargem(raiz) {
         celula: function (l) { return fR$(l[7]); } },
       { titulo: "Margem", num: true, tipo: "percentual", valor: function (l) { return l[8]; },
         celula: function (l) {
-          return el("span", "selo " + (n(l[8]) < 0 ? "grave" : "atencao"), fPct(l[8], 2));
+          return el("span", "selo " + (n(l[8]) < 0 ? "grave" : "atencao"), fPct(l[8], 4));
         } },
       { titulo: "Margem R$", num: true, tipo: "moeda", valor: function (l) { return l[9]; },
         celula: function (l) { return fR$(l[9]); } }
@@ -1773,9 +1780,9 @@ function paginaMargem(raiz) {
       var marg = todas.reduce(function (s, l) { return s + n(l[9]); }, 0);
       return [
         { rotulo: "Itens na lista", numero: todas.length, formatar: fInt },
-        { rotulo: "Venda envolvida", numero: venda, formatar: fCurto, destaque: true, sub: fR$(venda) },
-        { rotulo: "Margem gerada", numero: marg, formatar: fCurto, sub: fR$(marg) },
-        { rotulo: "Margem média", numero: venda ? marg / venda * 100 : 0, formatar: function (v) { return fPct(v, 2); } }
+        { rotulo: "Venda envolvida", numero: venda, formatar: fR$, exato: true, destaque: true },
+        { rotulo: "Margem gerada", numero: marg, formatar: fR$, exato: true },
+        { rotulo: "Margem média", numero: venda ? marg / venda * 100 : 0, formatar: function (v) { return fPct(v, 4); } }
       ];
     },
     csv: true,
@@ -1869,7 +1876,7 @@ function paginaPedidos(raiz) {
   raiz.appendChild(heroi({
     rotulo: "Valor parado na carteira",
     valor: totalValor,
-    formatar: fCurto,
+    formatar: fR$, exato: true,
     sub: "<b>" + fInt(linhas.length) + "</b> pedidos ainda não faturados. Destes, <b>" + fInt(fora.length) +
          "</b> estão abaixo de " + limite + "% de margem, somando <b>" + fCurto(valorFora) + "</b> — " +
          "é o que dá para segurar antes de faturar.",
@@ -1878,9 +1885,9 @@ function paginaPedidos(raiz) {
         sub: "não faturados nem cancelados" },
       { rotulo: "Abaixo de " + limite + "%", numero: fora.length, formatar: fInt, tom: "grave",
         sub: linhas.length ? fPct(fora.length / linhas.length * 100, 1) + " dos pedidos" : "—" },
-      { rotulo: "Valor fora da margem", numero: valorFora, formatar: fCurto, titulo: fR$(valorFora), tom: "grave",
+      { rotulo: "Valor fora da margem", numero: valorFora, formatar: fR$, exato: true, tom: "grave",
         sub: "para revisar antes do faturamento" },
-      { rotulo: "Ticket médio", numero: linhas.length ? totalValor / linhas.length : 0, formatar: fCurto,
+      { rotulo: "Ticket médio", numero: linhas.length ? totalValor / linhas.length : 0, formatar: fR$, exato: true,
         tom: "atencao", sub: "por pedido em aberto" }
     ]
   }));
@@ -1944,9 +1951,9 @@ function paginaPedidos(raiz) {
       var fo = todas.filter(function (p) { return p[9] != null && n(p[9]) < limite; });
       return [
         { rotulo: "Pedidos", numero: todas.length, formatar: fInt },
-        { rotulo: "Valor em carteira", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) },
+        { rotulo: "Valor em carteira", numero: v, formatar: fR$, exato: true, destaque: true },
         { rotulo: "Fora da margem", numero: fo.length, formatar: fInt },
-        { rotulo: "Valor fora", numero: fo.reduce(function (s, p) { return s + n(p[7]); }, 0), formatar: fCurto }
+        { rotulo: "Valor fora", numero: fo.reduce(function (s, p) { return s + n(p[7]); }, 0), formatar: fR$, exato: true }
       ];
     },
     csv: true,
@@ -1977,19 +1984,19 @@ function paginaDevolucoes(raiz) {
   raiz.appendChild(heroi({
     rotulo: "Devolvido no período",
     valor: valorTotal,
-    formatar: fCurto,
+    formatar: fR$, exato: true,
     sub: "<b>" + fInt(t.notas) + "</b> notas de entrada. <b>" + fCurto(valorRca) + "</b> (" +
          fPct(valorTotal ? valorRca / valorTotal * 100 : 0, 1) + ") por motivos comerciais, " +
          "que são os atribuíveis ao vendedor.",
     kpis: [
-      { rotulo: "Responsabilidade do RCA", numero: valorRca, formatar: fCurto, titulo: fR$(valorRca), tom: "atencao",
+      { rotulo: "Responsabilidade do RCA", numero: valorRca, formatar: fR$, exato: true, tom: "atencao",
         sub: valorTotal ? fPct(valorRca / valorTotal * 100, 1) + " do total" : "—",
         ajuda: "Motivos comerciais: não pediu, preço errado, pedido repetido, sem dinheiro… Erro de carregamento, atraso e produto danificado ficam de fora." },
-      { rotulo: "No filtro atual", numero: valorFiltrado, formatar: fCurto, titulo: fR$(valorFiltrado), tom: "info",
+      { rotulo: "No filtro atual", numero: valorFiltrado, formatar: fR$, exato: true, tom: "info",
         sub: fInt(linhas.length) + " linhas",
         ajuda: "Este cartão segue exatamente os mesmos filtros da tabela abaixo." },
       { rotulo: "Notas de entrada", numero: n(t.notas), formatar: fInt, tom: "roxo", sub: "no período" },
-      { rotulo: "Valor médio por nota", numero: n(t.notas) ? valorTotal / n(t.notas) : 0, formatar: fCurto,
+      { rotulo: "Valor médio por nota", numero: n(t.notas) ? valorTotal / n(t.notas) : 0, formatar: fR$, exato: true,
         sub: "devolvido por nota" }
     ]
   }));
@@ -2086,8 +2093,8 @@ function paginaDevolucoes(raiz) {
                        .reduce(function (s, l) { return s + n(l[7]); }, 0);
       return [
         { rotulo: "Linhas", numero: todas.length, formatar: fInt },
-        { rotulo: "Valor devolvido", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) },
-        { rotulo: "Do vendedor", numero: doRca, formatar: fCurto },
+        { rotulo: "Valor devolvido", numero: v, formatar: fR$, exato: true, destaque: true },
+        { rotulo: "Do vendedor", numero: doRca, formatar: fR$, exato: true },
         { rotulo: "Participação do vendedor", numero: v ? doRca / v * 100 : 0, formatar: function (x) { return fPct(x, 1); } }
       ];
     },
@@ -2148,7 +2155,7 @@ function abrirDevolucoesDoRca(codusur) {
         var v = todas.reduce(function (s, l) { return s + n(l[6]); }, 0);
         return [
           { rotulo: "Notas", numero: todas.length, formatar: fInt },
-          { rotulo: "Valor devolvido", numero: v, formatar: fCurto, destaque: true, sub: fR$(v) }
+          { rotulo: "Valor devolvido", numero: v, formatar: fR$, exato: true, destaque: true }
         ];
       },
       csv: true, porPagina: 25,

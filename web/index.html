@@ -383,6 +383,11 @@ button,input,select{font-family:inherit;font-weight:600;}
 }
 .totais .t .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.14em;color:var(--txt-3);font-weight:800;}
 .totais .t .v{font-family:"JetBrains Mono";font-size:20px;font-weight:800;letter-spacing:-.045em;color:var(--txt-1);}
+/* Valor inteiro na faixa de totais: corpo menor, porque R$ 11.908.424,40 nao
+   cabe nos 20px do numero curto. Pedido do Julio em 2026-10-28, para o painel
+   todo: "os paineis precisam esta com o valor inteiro". */
+.totais .t .v.exato{font-size:15px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
+.totais .t.destaque .v.exato{font-size:17px;}
 .totais .t.destaque{background:linear-gradient(170deg,rgba(184,137,42,.3),rgba(5,11,28,.95));}
 .totais .t.destaque .v{color:var(--ouro-forte);font-size:23px;}
 .totais .t.destaque .k{color:var(--ouro);}
