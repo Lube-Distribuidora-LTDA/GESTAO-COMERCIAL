@@ -54,6 +54,8 @@ var PAGINAS = [
   { id: "comissao",  grupo: "Vendas", nome: "Comissão por RCA",  icone: "M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" },
   { id: "margem",    grupo: "Vendas", nome: "Margem por item",   icone: "M3 3v18h18M7 15l4-4 3 3 5-6" },
   { id: "pedidos",   grupo: "Vendas", nome: "Pedidos em aberto", icone: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" },
+  { id: "comissao_st", grupo: "Vendas", nome: "Comissão RCA - ST",
+    icone: "M3 3v18h18M7 16l3-6 3 3 4-8" },
   { id: "devolucao", grupo: "Vendas", nome: "Devoluções",        icone: "M3 10h11a4 4 0 1 1 0 8h-1M3 10l4-4M3 10l4 4" }
   /* A "Margem das filiais" ficou aqui de 30/09 a 13/10/2026: primeiro como
      formulario, depois so consulta. Saiu a pedido do Julio. O sistema de
@@ -214,6 +216,173 @@ function somar(acc, linha) {
 /* ---------------------------------------------------------------------------
  * Filtros
  * ------------------------------------------------------------------------ */
+/* ---------------------------------------------------------------------------
+ * A dinâmica dos filtros
+ *
+ * Três coisas que faltavam, e que atrapalhavam quem usa o painel o dia inteiro:
+ *
+ *   1. O filtro se perdia. Trocar de aba, apertar F5 ou voltar no dia seguinte
+ *      zerava tudo. Agora o que você escolheu fica guardado no navegador.
+ *   2. Não dava para ver o que estava filtrando. Com a filial escondida num
+ *      chip lá em cima, era fácil olhar um número errado achando que era o
+ *      total. Agora os filtros ativos aparecem numa faixa, cada um com um X.
+ *   3. Não dava para mandar a visão para alguém. Agora o endereço carrega os
+ *      filtros: copiou o link, o outro abre exatamente a mesma tela.
+ *
+ * O período continua onde estava, na barra de cima — ele já se via bem.
+ * ------------------------------------------------------------------------ */
+
+var GUARDA = "comercial.filtros.v1";
+
+/* O que vale a pena guardar: o que a pessoa escolheu, não o que a tela
+   calculou. Paginação e ordenação ficam de fora de propósito — voltar numa
+   tabela na página 7 confunde mais do que ajuda. */
+function filtrosAtuais() {
+  return {
+    pagina: E.pagina,
+    de: E.de, ate: E.ate,
+    filiais: E.filiais ? Array.from(E.filiais) : null,
+    supervisor: E.supervisor,
+    busca: E.busca,
+    grao: E.grao,
+    limiteMargem: E.limiteMargem,
+    limitePedido: E.limitePedido,
+    posicoes: E.posicoes ? Array.from(E.posicoes) : null,
+    motivo: E.motivo,
+    soMotivoRca: E.soMotivoRca
+  };
+}
+
+function aplicarFiltros(o) {
+  if (!o || typeof o !== "object") return;
+  if (o.pagina && PAGINAS.some(function (p) { return p.id === o.pagina; })) E.pagina = o.pagina;
+  if (o.de) E.de = o.de;
+  if (o.ate) E.ate = o.ate;
+  E.filiais = Array.isArray(o.filiais) && o.filiais.length ? new Set(o.filiais.map(Number)) : null;
+  E.supervisor = o.supervisor || "";
+  E.busca = o.busca || "";
+  if (o.grao) E.grao = o.grao;
+  if (o.limiteMargem != null) E.limiteMargem = o.limiteMargem;
+  if (o.limitePedido != null) E.limitePedido = o.limitePedido;
+  E.posicoes = Array.isArray(o.posicoes) && o.posicoes.length ? new Set(o.posicoes) : null;
+  E.motivo = o.motivo || "";
+  E.soMotivoRca = !!o.soMotivoRca;
+}
+
+function guardarFiltros() {
+  try { localStorage.setItem(GUARDA, JSON.stringify(filtrosAtuais())); } catch (e) {}
+  /* o endereço acompanha, sem recarregar a página */
+  try {
+    var h = btoa(unescape(encodeURIComponent(JSON.stringify(filtrosAtuais()))));
+    history.replaceState(null, "", "#f=" + h);
+  } catch (e) {}
+}
+
+/* Na abertura: o link manda mais que o guardado — quem recebeu um link quer
+   ver aquilo, não o que ele mesmo filtrou ontem. */
+function restaurarFiltros() {
+  var doLink = null;
+  try {
+    var m = (location.hash || "").match(/#f=(.+)$/);
+    if (m) doLink = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+  } catch (e) {}
+  if (doLink) { aplicarFiltros(doLink); return "link"; }
+  try {
+    var g = localStorage.getItem(GUARDA);
+    if (g) {
+      var o = JSON.parse(g);
+      /* O periodo guardado NAO volta: abrir o painel amanha e ver o periodo de
+         ontem confunde mais do que ajuda, e o mes corrente e quase sempre o que
+         se quer. Ja o periodo de um LINK volta, porque quem mandou o link quis
+         justamente fixar aquele recorte. */
+      delete o.de; delete o.ate;
+      aplicarFiltros(o);
+      return "guardado";
+    }
+  } catch (e) {}
+  return null;
+}
+
+/* ---------- a faixa de filtros ativos ---------- */
+
+/* Cada filtro ligado vira uma etiqueta com X. Some quando não há nenhum. */
+function barraFiltrosAtivos(contagem) {
+  var ativos = [];
+
+  if (E.filiais && E.filiais.size) {
+    ativos.push({
+      rot: "Filial",
+      txt: Array.from(E.filiais).sort(function (a, b) { return a - b; }).join(", "),
+      tira: function () { E.filiais = null; }
+    });
+  }
+  if (E.supervisor) {
+    ativos.push({ rot: "Supervisor", txt: nomeSupervisor(E.supervisor),
+                  tira: function () { E.supervisor = ""; } });
+  }
+  if (E.busca) {
+    ativos.push({ rot: "Busca", txt: '"' + E.busca + '"', tira: function () { E.busca = ""; } });
+  }
+  if (E.posicoes && E.posicoes.size) {
+    ativos.push({ rot: "Posição", txt: Array.from(E.posicoes).join(", "),
+                  tira: function () { E.posicoes = null; } });
+  }
+  if (E.motivo) {
+    ativos.push({ rot: "Motivo", txt: motivoDe(E.motivo),
+                  tira: function () { E.motivo = ""; } });
+  }
+  if (E.soMotivoRca) {
+    ativos.push({ rot: "Devolução", txt: "só as do RCA",
+                  tira: function () { E.soMotivoRca = false; } });
+  }
+
+  if (!ativos.length && !contagem) return null;
+
+  var b = el("div", "fativos");
+  if (ativos.length) {
+    b.appendChild(el("span", "fativos-rot", "Filtrando por"));
+    ativos.forEach(function (a) {
+      var e = el("span", "fativo");
+      e.appendChild(el("b", null, a.rot + ": "));
+      e.appendChild(document.createTextNode(a.txt));
+      var x = el("button", "fativo-x", "×");
+      x.type = "button";
+      x.title = "Tirar este filtro";
+      x.addEventListener("click", function () { a.tira(); desenhar(); });
+      e.appendChild(x);
+      b.appendChild(e);
+    });
+    var limpar = el("button", "fativo-limpar", "Limpar tudo");
+    limpar.type = "button";
+    limpar.addEventListener("click", function () {
+      E.filiais = null; E.supervisor = ""; E.busca = "";
+      E.posicoes = null; E.motivo = ""; E.soMotivoRca = false;
+      desenhar();
+    });
+    b.appendChild(limpar);
+  }
+
+  if (contagem) {
+    var c = el("span", "fativos-conta");
+    c.innerHTML = contagem;
+    b.appendChild(c);
+  }
+
+  var link = el("button", "fativo-link", "Copiar link desta visão");
+  link.type = "button";
+  link.title = "Copia o endereço com os filtros de agora, para mandar para alguém";
+  link.addEventListener("click", function () {
+    var url = location.origin + location.pathname + location.hash;
+    var pronto = function () { link.textContent = "Link copiado"; setTimeout(function () {
+      link.textContent = "Copiar link desta visão"; }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(pronto, function () { window.prompt("Copie o link:", url); });
+    } else { window.prompt("Copie o link:", url); }
+  });
+  b.appendChild(link);
+  return b;
+}
+
 function filiaisDisponiveis() {
   var s = {};
   (D.comissao.rca || []).forEach(function (l) { s[l[1]] = 1; });
@@ -293,6 +462,13 @@ function painel(titulo, sub, acoes) {
   p.appendChild(corpo);
   p.corpo = corpo;
   return p;
+}
+
+/* Nome de vendedor vai para innerHTML nos avisos; escapar e barato e evita
+   que um cadastro com "<" quebre a tela. */
+function esc(t) {
+  return String(t == null ? "" : t)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function nota(texto, tom) {
@@ -1214,6 +1390,263 @@ function abrirNotasDoRca(r) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Página 1b — COMISSÃO RCA - ST  (a "TABELA CONSULTIVA - ST" do Power BI)
+ *
+ * Reprodução fiel da página do Power BI, para o comercial e o financeiro
+ * conferirem o fechamento lado a lado. A diferença para a página "Comissão por
+ * RCA" é só de apresentação — a conta é a mesma, e é a mesma do Power BI:
+ *
+ *   base da comissão  [44] = venda s/ST − devolução COM ST
+ *   denominador do %  [M6] = venda s/ST − devolução SEM ST   ← é o que a tela
+ *                                                              chama TOTAL LIQUIDO
+ *   CMV líquido       [45] = cmv venda − cmv devolução + desconto financeiro
+ *                            + cmv bonificação − ST
+ *   massa de margem   [46] = [M6] − [45]
+ *   % líquido         [47] = [46] ÷ [M6]      → escolhe a faixa
+ *   comissão                = [44] × faixa
+ *
+ * Conferido contra a ficha técnica de 28/10/2026 (01 a 27/10, filiais 1, 7, 10
+ * e 11): RODRIGO (180), VENDA ES PARA RJ (1248) e JANIO (903) batem CENTAVO A
+ * CENTAVO em todas as colunas. Os totais ficam ~1,5% acima da ficha porque o
+ * Power BI foi lido com o dado de 27/10 às 08:40 e aqui o dado é o de agora.
+ *
+ * Uma linha por RCA, sem quebra por filial — é o que diferencia esta página da
+ * irmã no Power BI, e o motivo de os dois números não baterem RCA a RCA quando
+ * o vendedor atende mais de uma filial.
+ * ------------------------------------------------------------------------ */
+
+/* Filiais que a página do Power BI traz marcadas. Vale só na primeira vez que
+   se abre a aba; a partir daí manda o que a pessoa escolheu. */
+var FILIAIS_ST_PADRAO = [1, 7, 10, 11];
+var st_padraoAplicado = false;
+
+function paginaComissaoSt(raiz) {
+  if (!st_padraoAplicado) {
+    st_padraoAplicado = true;
+    if (E.filiais == null) {
+      var tem = filiaisDisponiveis();
+      var sugerida = FILIAIS_ST_PADRAO.filter(function (f) { return tem.indexOf(f) !== -1; });
+      if (sugerida.length && sugerida.length < tem.length) E.filiais = new Set(sugerida);
+    }
+  }
+
+  var linhas = (D.comissao.rca || []).filter(function (l) { return passaFiltroRca(l[0], l[1]); });
+
+  /* uma linha por RCA: o grão desta página é fixo, não tem botão de grão */
+  var mapa = new Map();
+  linhas.forEach(function (l) {
+    var k = String(l[0]);
+    if (!mapa.has(k)) mapa.set(k, componentesVazios());
+    somar(mapa.get(k), l);
+  });
+
+  var itens = [];
+  mapa.forEach(function (c, k) {
+    var r = calcular(c);
+    r.codusur = Number(k);
+    r.nome = nomeRca(r.codusur);
+    r.supervisor = nomeSupervisor(supervisorDoRca(r.codusur));
+    itens.push(r);
+  });
+  itens.sort(function (a, b) { return b.totalLiquidoSst - a.totalLiquidoSst; });
+
+  var geral = componentesVazios();
+  linhas.forEach(function (l) { somar(geral, l); });
+  var empresa = calcular(geral);
+
+  var somaRca = itens.reduce(function (t, i) { return t + i.comissao; }, 0);
+  var totalPowerBi = empresa.totalLiquido * empresa.faixa;
+
+  var somaM6 = itens.reduce(function (t, i) { return t + i.totalLiquidoSst; }, 0);
+  var soma44 = itens.reduce(function (t, i) { return t + i.totalLiquido; }, 0);
+  var somaSt = itens.reduce(function (t, i) { return t + i.st; }, 0);
+
+  /* ---------- os três cards da tela original ---------- */
+  raiz.appendChild(heroi({
+    rotulo: "Comissão a pagar no período",
+    valor: somaRca,
+    formatar: fCurto,
+    sub: "Soma vendedor a vendedor, em <b>" + fInt(itens.length) + "</b> RCAs. " +
+         "A faixa de cada um sai da margem dele — por isso o total <b>não</b> é a faixa da " +
+         "empresa (" + fPct(empresa.perc, 2) + ") aplicada ao total.",
+    kpis: [
+      { rotulo: "Total líquido", numero: somaM6, formatar: fCurto, titulo: fR$(somaM6),
+        tom: "info", sub: "venda sem ST menos devolução sem ST",
+        ajuda: "É o TOTAL LIQUIDO da tela e o denominador do % líquido. Não é a base da comissão." },
+      { rotulo: "Total ST", numero: somaSt, formatar: fCurto, titulo: fR$(somaSt),
+        tom: "atencao", sub: "substituição tributária no período" },
+      { rotulo: "Total + ST", numero: soma44 + somaSt, formatar: fCurto, titulo: fR$(soma44 + somaSt),
+        tom: "roxo", sub: "base da comissão mais o ST",
+        ajuda: "Soma o ST à base que paga a comissão, que usa a devolução COM ST. " +
+               "Por isso Total líquido + Total ST não dá exatamente este número." },
+      { rotulo: "Massa de margem", numero: empresa.massa, formatar: fCurto, titulo: fR$(empresa.massa),
+        tom: "bom", sub: "total líquido menos CMV líquido" }
+    ]
+  }));
+
+  /* ---------- filtros ---------- */
+  var f = el("div", "filtros sobe");
+  var fil = filiaisDisponiveis();
+  if (fil.length > 1) {
+    f.appendChild(chipsMultiplos("Filial", fil.map(function (x) { return { valor: x, rotulo: "Filial " + x }; }),
+      E.filiais, function (novo) { E.filiais = novo; desenhar(); }));
+  }
+  f.appendChild(seletorSupervisor());
+  f.appendChild(campoBusca("Buscar RCA por nome ou código…"));
+  raiz.appendChild(f);
+
+  /* ---------- os dois totais, lado a lado ---------- */
+  var pt = painel("Os dois totais desta tela",
+    "O Power BI mostra, na linha de total, a faixa da empresa aplicada ao total do período. " +
+    "Isso não é a soma do que se paga: cada vendedor tem a faixa dele.");
+  var conf = el("div", "confere");
+  [
+    ["Soma por RCA", fR$(somaRca), "Uma faixa por vendedor. É o que se paga.", true],
+    ["Como o Power BI totaliza", fR$(totalPowerBi),
+     "Faixa única de " + fPct(empresa.faixa * 100, 2) + " sobre o total.", false],
+    ["Diferença", fR$(somaRca - totalPowerBi), "O quanto a linha de total engana.", false]
+  ].forEach(function (c) {
+    var cel = el("div", "cel" + (c[3] ? " destaque" : ""));
+    cel.appendChild(el("div", "rot", c[0]));
+    cel.appendChild(el("div", "num", c[1]));
+    cel.appendChild(el("div", "dica", c[2]));
+    conf.appendChild(cel);
+  });
+  pt.corpo.appendChild(conf);
+  raiz.appendChild(pt);
+
+  /* ---------- distribuição por faixa ---------- */
+  var porFaixa = new Map();
+  itens.forEach(function (i) {
+    var k = (i.faixa * 100).toFixed(2);
+    if (!porFaixa.has(k)) porFaixa.set(k, { faixa: i.faixa, rcas: 0, base: 0, comissao: 0 });
+    var x = porFaixa.get(k);
+    x.rcas++; x.base += i.totalLiquido; x.comissao += i.comissao;
+  });
+  var faixas = Array.from(porFaixa.values()).sort(function (a, b) { return a.faixa - b.faixa; });
+
+  var pf = painel("Como os vendedores se distribuem nas faixas",
+    "A faixa não é proporcional: centésimos de margem mudam o percentual inteiro. " +
+    "Quem está na borda de uma faixa ganha ou perde muito com pouca venda.");
+  pf.corpo.remove();
+  pf.appendChild(tabela({
+    id: "comissao_st_faixas",
+    tituloCsv: "Distribuição por faixa de comissão (ST)",
+    colunas: [
+      { titulo: "Faixa", tipo: "texto", valor: function (l) { return l.faixa; },
+        celula: function (l) { return el("span", "selo ouro", fPct(l.faixa * 100, 2)); }, fixa: 1 },
+      { titulo: "RCAs", num: true, medida: true, tipo: "inteiro",
+        valor: function (l) { return l.rcas; }, celula: function (l) { return fInt(l.rcas); } },
+      { titulo: "Base da comissão", num: true, tipo: "moeda",
+        valor: function (l) { return l.base; }, celula: function (l) { return fR$(l.base); } },
+      { titulo: "Comissão", num: true, tipo: "moeda",
+        valor: function (l) { return l.comissao; }, celula: function (l) { return fR$(l.comissao); } }
+    ],
+    linhas: faixas,
+    medida: function (l) { return l.rcas; }, medidaCor: "viz-2",
+    ordemInicial: 0, dirInicial: 1,
+    valorOrdem: function (l, i) { return [l.faixa, l.rcas, l.base, l.comissao][i]; },
+    csv: true, porPagina: 10,
+    vazio: "Nenhum vendedor no filtro."
+  }));
+  raiz.appendChild(pf);
+
+  /* ---------- a tabela, nas 13 colunas da tela original ---------- */
+  var pr = painel("TABELA CONSULTIVA - ST",
+    "Uma linha por vendedor, sem quebra por filial. As colunas e a ordem são as da tela do Power BI.");
+  pr.corpo.remove();
+  pr.appendChild(tabela({
+    id: "comissao_st",
+    tituloCsv: "Comissão por RCA - ST",
+    filtrosExtras: function () {
+      return [["Grão", "Um RCA por linha (sem quebra por filial)"],
+              ["Base da comissão", "Venda sem ST menos devolução com ST"]];
+    },
+    colunas: [
+      { titulo: "CODUSUR", num: true, tipo: "inteiro", somar: false,
+        valor: function (l) { return l.codusur; }, celula: function (l) { return l.codusur; },
+        fraco: true, fixa: 1 },
+      { titulo: "RCA", tipo: "texto", valor: function (l) { return l.nome; },
+        celula: function (l) { return l.nome; }, corta: true, destacar: true, fixa: 2 },
+      { titulo: "TOTAL LIQUIDO", num: true, medida: true, tipo: "moeda",
+        valor: function (l) { return l.totalLiquidoSst; },
+        celula: function (l) { return fR$(l.totalLiquidoSst); } },
+      { titulo: "MASSA DE MARGEM", num: true, tipo: "moeda",
+        valor: function (l) { return l.massa; }, celula: function (l) { return fR$(l.massa); } },
+      { titulo: "% LIQUIDO", num: true, tipo: "percentual", somar: false,
+        valor: function (l) { return l.perc; },
+        celula: function (l) { return fPct(l.perc, 4); } },
+      { titulo: "% COMISSÃO", num: true, tipo: "percentual", somar: false,
+        valor: function (l) { return l.faixa * 100; },
+        celula: function (l) { return el("span", "selo ouro", fPct(l.faixa * 100, 2)); } },
+      { titulo: "COMISSÃO LUBE", num: true, tipo: "moeda",
+        valor: function (l) { return l.comissao; },
+        celula: function (l) { return fR$(l.comissao); }, destacar: true },
+      { titulo: "CMV_VENDA", num: true, tipo: "moeda",
+        valor: function (l) { return l.cmvVenda; }, celula: function (l) { return fR$(l.cmvVenda); } },
+      { titulo: "CMV LIQUIDO", num: true, tipo: "moeda",
+        valor: function (l) { return l.cmvLiquido; }, celula: function (l) { return fR$(l.cmvLiquido); } },
+      { titulo: "ST", num: true, tipo: "moeda",
+        valor: function (l) { return l.st; }, celula: function (l) { return fR$(l.st); } },
+      { titulo: "CMV DEV ST", num: true, tipo: "moeda",
+        valor: function (l) { return l.cmvDev; }, celula: function (l) { return fR$(l.cmvDev); } },
+      { titulo: "DESCONTO FINANCEIRO", num: true, tipo: "moeda",
+        valor: function (l) { return l.descfin; }, celula: function (l) { return fR$(l.descfin); } },
+      { titulo: "CMV BONIFICAÇÃO", num: true, tipo: "moeda",
+        valor: function (l) { return l.cmvBonif; }, celula: function (l) { return fR$(l.cmvBonif); } }
+    ],
+    linhas: itens,
+    medida: function (l) { return l.totalLiquidoSst; }, medidaCor: "viz-1",
+    ordemInicial: 2, dirInicial: -1,
+    valorOrdem: function (l, i) {
+      return [l.codusur, l.nome, l.totalLiquidoSst, l.massa, l.perc, l.faixa,
+              l.comissao, l.cmvVenda, l.cmvLiquido, l.st, l.cmvDev, l.descfin, l.cmvBonif][i];
+    },
+    totais: function (todas) {
+      var m6 = todas.reduce(function (t, l) { return t + l.totalLiquidoSst; }, 0);
+      var com = todas.reduce(function (t, l) { return t + l.comissao; }, 0);
+      var ma = todas.reduce(function (t, l) { return t + l.massa; }, 0);
+      return [
+        { rotulo: "Vendedores", numero: todas.length, formatar: fInt },
+        { rotulo: "Total líquido", numero: m6, formatar: fCurto, sub: fR$(m6) },
+        { rotulo: "Massa de margem", numero: ma, formatar: fCurto, sub: fR$(ma) },
+        { rotulo: "Comissão a pagar", numero: com, formatar: fCurto, destaque: true, sub: fR$(com) }
+      ];
+    },
+    csv: true, porPagina: 25,
+    vazio: "Nenhum vendedor com movimento no filtro."
+  }));
+  raiz.appendChild(pr);
+
+  /* ---------- o que precisa de olho ---------- */
+  var avisos = [];
+  var semVendedor = itens.filter(function (i) { return /VENDA .* PARA /i.test(i.nome || ""); });
+  if (semVendedor.length) {
+    avisos.push("<b>" + semVendedor.map(function (i) { return esc(i.nome); }).join(", ") +
+      "</b> não é vendedor e recebe comissão como se fosse (" +
+      fR$(semVendedor.reduce(function (t, i) { return t + i.comissao; }, 0)) + " no período).");
+  }
+  var negativos = itens.filter(function (i) { return i.perc != null && i.perc < 0; });
+  if (negativos.length) {
+    avisos.push("<b>" + fInt(negativos.length) + "</b> vendedor(es) com margem negativa recebem 1%, " +
+      "porque a faixa mais baixa não distingue margem baixa de prejuízo.");
+  }
+  var naBorda = itens.filter(function (i) {
+    if (i.perc == null) return false;
+    return [20, 21, 23, 26, 30].some(function (b) { return Math.abs(i.perc - b) < 0.5; });
+  });
+  if (naBorda.length) {
+    avisos.push("<b>" + fInt(naBorda.length) + "</b> vendedor(es) estão a menos de meio ponto de " +
+      "trocar de faixa. Meio ponto de margem pode valer milhares de reais de comissão.");
+  }
+  if (avisos.length) {
+    var pa = painel("O que merece atenção neste período");
+    pa.corpo.appendChild(nota(avisos.join("<br><br>"), "atencao"));
+    raiz.appendChild(pa);
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Página 2 — MARGEM POR ITEM
  * ------------------------------------------------------------------------ */
 function paginaMargem(raiz) {
@@ -1876,6 +2309,19 @@ function falhar(e) {
 /* ---------------------------------------------------------------------------
  * Desenho
  * ------------------------------------------------------------------------ */
+/* "104 de 128 vendedores" — para ninguém confundir um recorte com o total.
+   Só aparece quando o filtro de fato tirou alguma coisa. */
+function contagemDoFiltro() {
+  if (E.pagina !== "comissao" && E.pagina !== "comissao_st") return null;
+  var todos = new Set(), vistos = new Set();
+  (D.comissao.rca || []).forEach(function (l) {
+    todos.add(l[0]);
+    if (passaFiltroRca(l[0], l[1])) vistos.add(l[0]);
+  });
+  if (vistos.size === todos.size) return null;
+  return "<b>" + fInt(vistos.size) + "</b> de " + fInt(todos.size) + " vendedores";
+}
+
 function desenhar(manterRolagem) {
   var y = window.scrollY;
   var raiz = limpar(document.getElementById("pagina"));
@@ -1888,11 +2334,18 @@ function desenhar(manterRolagem) {
   /* a página de operação não olha período: ela mexe no cadastro de agora */
   raiz.appendChild(barraPeriodo());
 
+  /* o que estiver filtrado passa a ficar guardado e no endereço */
+  guardarFiltros();
+
+  var faixa = barraFiltrosAtivos(contagemDoFiltro());
+  if (faixa) raiz.appendChild(faixa);
+
   var corpo = el("div");
   corpo.style.cssText = "display:flex;flex-direction:column;gap:16px;margin-top:16px;";
   raiz.appendChild(corpo);
 
   if (E.pagina === "comissao") paginaComissao(corpo);
+  else if (E.pagina === "comissao_st") paginaComissaoSt(corpo);
   else if (E.pagina === "margem") paginaMargem(corpo);
   else if (E.pagina === "pedidos") paginaPedidos(corpo);
   else paginaDevolucoes(corpo);
@@ -2138,6 +2591,7 @@ document.getElementById("btn-atualizar").addEventListener("click", function () {
 
 E.ate = hoje();
 E.de = primeiroDiaDoMes(E.ate);
+restaurarFiltros();          /* link > guardado > padrao */
 carregar(false);
 VIVO.timer = setTimeout(cicloAoVivo, 1500);
 
