@@ -141,8 +141,8 @@ COMMENT ON COLUMN comercial.fato_margem_item.margem_valor IS
     'o percentual não é.';
 CREATE INDEX IF NOT EXISTS ix_margem_venda ON comercial.fato_margem_item (dtmov, margem_perc)
     WHERE codoper = 'S';
-CREATE INDEX IF NOT EXISTS ix_margem_prod  ON comercial.fato_margem_item (codprod);
-CREATE INDEX IF NOT EXISTS ix_margem_rca   ON comercial.fato_margem_item (codusur);
+-- ix_margem_prod (codprod) e ix_margem_rca (codusur) saíram em 2026-10-28: ninguém
+-- usava e pesavam na carga das 03:45 (ver 12-margem-sem-indices-sem-uso.sql).
 
 -- Consulta6 — base da comissão. Uma linha por nota × pedido × cliente × RCA × filial.
 CREATE TABLE IF NOT EXISTS comercial.fato_comissao_nf (
