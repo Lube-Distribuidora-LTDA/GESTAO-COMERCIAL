@@ -254,9 +254,22 @@ button,input,select{font-family:inherit;font-weight:600;}
 /* duas colunas fixas: com "auto-fit" o quarto cartão caía sozinho numa
    segunda linha quando faltavam poucos pixels, e a linha ficava torta */
 .heroi-lado{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;align-items:stretch;}
-/* número ímpar de cartões: o último ocupa a linha inteira em vez de deixar
-   um buraco do lado direito (a aba ST passou a ter cinco em 2026-10-29) */
-.heroi-lado>.kpi:last-child:nth-child(odd){grid-column:1 / -1;}
+/* Rodé do cartão grande: um número que explica o número principal, no mesmo
+   cartão. Nasceu do % líquido da aba ST: como quinto KPI ele levava o bloco da
+   direita a três linhas e esticava o cartão dourado, que ficava alto e vazio. */
+.heroi-card .rodape{
+  margin-top:16px;padding-top:13px;border-top:1px solid var(--ouro-linha);
+  display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+}
+.heroi-card .rodape .rot{
+  font-family:"Archivo";font-size:10px;letter-spacing:.17em;text-transform:uppercase;
+  color:var(--ouro);font-weight:800;display:flex;align-items:center;gap:6px;
+}
+.heroi-card .rodape .num{
+  font-family:"JetBrains Mono";font-size:21px;font-weight:800;letter-spacing:-.04em;
+  color:var(--ouro-forte);font-variant-numeric:tabular-nums;
+}
+.heroi-card .rodape .dica{flex-basis:100%;font-size:11.5px;color:var(--txt-3);font-weight:600;line-height:1.45;}
 
 /* ---------- kpis ---------- */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;}

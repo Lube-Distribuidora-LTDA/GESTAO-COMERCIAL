@@ -426,6 +426,26 @@ function heroi(cfg) {
     s.innerHTML = cfg.sub;
     card.appendChild(s);
   }
+  /* Rodape: um numero que explica o numero grande, dentro do mesmo cartao.
+     Fica aqui, e nao como mais um KPI do lado, porque um quinto cartao
+     empurraria o bloco para tres linhas e esticaria este cartao junto. */
+  if (cfg.rodape) {
+    var r = el("div", "rodape");
+    var rot = el("div", "rot");
+    rot.appendChild(document.createTextNode(cfg.rodape.rotulo));
+    if (cfg.rodape.ajuda) {
+      var aj = el("span", "ajuda", "?"); aj.tabIndex = 0;
+      aj.appendChild(el("span", "tip", cfg.rodape.ajuda));
+      rot.appendChild(aj);
+    }
+    r.appendChild(rot);
+    var num = el("div", "num");
+    r.appendChild(num);
+    if (cfg.rodape.valor != null) animarNumero(num, "rodape_" + E.pagina, cfg.rodape.valor, cfg.rodape.formatar);
+    else num.textContent = "—";
+    if (cfg.rodape.sub) r.appendChild(el("div", "dica", cfg.rodape.sub));
+    card.appendChild(r);
+  }
   g.appendChild(card);
   var lado = el("div", "heroi-lado");
   blocoKpis(cfg.kpis, lado, cfg.exato);
@@ -1523,7 +1543,15 @@ function paginaComissaoSt(raiz) {
     exato: true,
     sub: "Soma vendedor a vendedor, em <b>" + fInt(itens.length) + "</b> RCAs. " +
          "A faixa de cada um sai da margem dele — por isso o total <b>não</b> é a faixa da " +
-         "empresa (" + fPct(empresa.perc, 4) + ") aplicada ao total.",
+         "empresa aplicada ao total.",
+    rodape: {
+      rotulo: "% líquido do período",
+      valor: percPeriodo,
+      formatar: pct4,
+      sub: "massa de margem ÷ total líquido — é assim que o Power BI totaliza a coluna",
+      ajuda: "Não é a média das linhas da tabela: nela um RCA pequeno pesaria igual a um grande. "
+             + "A média simples entre os RCAs dá " + fPct(mediaSimples, 4) + "."
+    },
     kpis: [
       { rotulo: "Total líquido", numero: somaM6, formatar: fR$, exato: true,
         tom: "info", sub: "venda sem ST menos devolução sem ST",
@@ -1535,13 +1563,7 @@ function paginaComissaoSt(raiz) {
         ajuda: "Soma o ST à base que paga a comissão, que usa a devolução COM ST. " +
                "Por isso Total líquido + Total ST não dá exatamente este número." },
       { rotulo: "Massa de margem", numero: empresa.massa, formatar: fR$, exato: true,
-        tom: "bom", sub: "total líquido menos CMV líquido" },
-      { rotulo: "% líquido", numero: percPeriodo, formatar: pct4,
-        sub: "massa de margem ÷ total líquido",
-        ajuda: "O total da coluna % LIQUIDO, como o Power BI totaliza: a massa de todos "
-               + "dividida pelo total líquido de todos. Não é a média das linhas — nela um RCA "
-               + "pequeno pesaria igual a um grande. A média simples entre os RCAs dá "
-               + fPct(mediaSimples, 4) + "." }
+        tom: "bom", sub: "total líquido menos CMV líquido" }
     ]
   }));
 
@@ -2257,6 +2279,11 @@ function mesSelecionado() {
 
 function trocarPeriodo(de, ate) {
   if (!de || !ate) return;
+  /* O campo de data dispara "change" a cada dígito do ANO: digitar 2026 passa
+     por 0002, 0020 e 0202, e cada um desses virava uma consulta ao banco e uma
+     linha guardada no cache do painel. Ano antes de 2000 não é período, é ano
+     pela metade — a base começa em 2025. */
+  if (de.slice(0, 4) < "2000" || ate.slice(0, 4) < "2000") return;
   if (de > ate) { var t = de; de = ate; ate = t; }
   E.de = de; E.ate = ate;
   carregar(false);
