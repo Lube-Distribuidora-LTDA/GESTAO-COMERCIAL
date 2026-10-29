@@ -1670,16 +1670,34 @@ function paginaComissaoSt(raiz) {
   }
   var negativos = itens.filter(function (i) { return i.perc != null && i.perc < 0; });
   if (negativos.length) {
-    avisos.push("<b>" + fInt(negativos.length) + "</b> vendedor(es) com margem negativa recebem 1%, " +
-      "porque a faixa mais baixa não distingue margem baixa de prejuízo.");
+    /* o piso vem da escada do banco: era 1,0% ate 28/10 e hoje e 3,0% */
+    avisos.push("<b>" + fInt(negativos.length) + "</b> vendedor(es) com margem negativa recebem " +
+      fPct(percComissao(-1) * 100, 2) + ", porque a faixa mais baixa não distingue margem baixa "
+      + "de prejuízo.");
   }
-  var naBorda = itens.filter(function (i) {
-    if (i.perc == null) return false;
-    return [20, 21, 23, 26, 30].some(function (b) { return Math.abs(i.perc - b) < 0.5; });
-  });
+  /* As bordas sao as da escada que esta valendo, nao uma lista escrita a mao:
+     com 6 faixas eram 20, 21, 23, 26 e 30; com as 11 de hoje, 21 a 30.
+
+     E a conta do aviso mudou junto. Com as bordas de ponto em ponto, "a meio
+     ponto de uma borda" vale para todo mundo entre 20,5% e 30,5% — disparava
+     para metade da equipe e nao apontava ninguem. Entao: so a borda DE CIMA,
+     a um quarto de ponto, e dizendo o que ela vale em dinheiro, que e a
+     pergunta de quem le. */
+  var bordas = (D.faixas || []).map(function (f) { return n(f[0]); })
+    .filter(function (x) { return x > -100; }).sort(function (a, b) { return a - b; });
+  var naBorda = itens.map(function (i) {
+    if (i.perc == null) return null;
+    var acima = null;
+    for (var b = 0; b < bordas.length; b++) { if (bordas[b] > i.perc) { acima = bordas[b]; break; } }
+    if (acima == null || acima - i.perc > 0.25) return null;
+    var ganho = i.totalLiquido * (percComissao(acima) - i.faixa);
+    return ganho > 0 ? { falta: acima - i.perc, ganho: ganho } : null;
+  }).filter(function (x) { return x; });
   if (naBorda.length) {
-    avisos.push("<b>" + fInt(naBorda.length) + "</b> vendedor(es) estão a menos de meio ponto de " +
-      "trocar de faixa. Meio ponto de margem pode valer milhares de reais de comissão.");
+    var ganhoTotal = naBorda.reduce(function (t, x) { return t + x.ganho; }, 0);
+    avisos.push("<b>" + fInt(naBorda.length) + "</b> vendedor(es) estão a menos de <b>um quarto de ponto</b> " +
+      "de margem da faixa de cima. Chegar lá vale <b>" + fR$(ganhoTotal) + "</b> de comissão a mais, somando os " +
+      "cenários — e perder esse mesmo quarto de ponto custa o equivalente.");
   }
   if (avisos.length) {
     var pa = painel("O que merece atenção neste período");
