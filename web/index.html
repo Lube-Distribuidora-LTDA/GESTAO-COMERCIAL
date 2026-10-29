@@ -218,6 +218,56 @@ button,input,select{font-family:inherit;font-weight:600;}
   padding:7px 11px;font-size:12.5px;font-weight:700;cursor:pointer;max-width:290px;
 }
 .filtros select:hover{border-color:var(--ouro-linha);}
+
+/* Botão que abre um painel de marcar vários (supervisor). Tem a mesma altura e
+   o mesmo corpo do <select> ao lado, para a barra continuar uma linha só. */
+.pop-botao{
+  cursor:pointer;background:var(--surface-2);border:1px solid var(--line-1);color:var(--txt-1);
+  border-radius:11px;padding:7px 11px;font-size:12.5px;font-weight:700;
+  display:inline-flex;align-items:center;gap:8px;max-width:290px;transition:all .18s var(--ease);
+}
+.pop-botao:hover{border-color:var(--ouro-linha);}
+.pop-botao.on{border-color:var(--ouro-linha);color:var(--ouro-forte);background:var(--ouro-dim);}
+.pop-botao .tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pop-botao .seta{width:0;height:0;flex:none;border-left:4px solid transparent;border-right:4px solid transparent;
+  border-top:5px solid currentColor;opacity:.7;}
+
+/* O painel em si */
+.pop{
+  position:fixed;z-index:90;width:318px;max-height:min(440px,68vh);display:flex;flex-direction:column;
+  background:linear-gradient(160deg,rgba(19,34,66,.98),rgba(11,20,41,.98));
+  border:1px solid var(--line-2);border-radius:14px;box-shadow:0 30px 70px -20px rgba(0,0,0,.8);
+  animation:pop-entra .16s var(--ease);
+}
+@keyframes pop-entra{from{opacity:0;transform:translateY(-6px) scale(.98);}}
+.pop-topo{padding:10px;border-bottom:1px solid var(--line-1);}
+.pop-topo input{
+  width:100%;height:34px;border-radius:10px;border:1px solid var(--line-1);background:var(--surface-2);
+  color:var(--txt-1);padding:0 11px;font-size:12.5px;font-weight:600;outline:none;
+}
+.pop-topo input:focus{border-color:var(--ouro-linha);box-shadow:0 0 0 3px var(--ouro-dim);}
+.pop-lista{overflow:auto;padding:6px;flex:1;}
+.pop-item{
+  display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;text-align:left;
+  padding:8px 10px;border-radius:9px;color:var(--txt-2);font-size:12.5px;font-weight:600;cursor:pointer;
+}
+.pop-item:hover{background:rgba(255,255,255,.06);color:var(--txt-1);}
+.pop-item .cx{width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);
+  display:grid;place-items:center;flex:none;}
+.pop-item.on .cx{background:var(--ouro);border-color:var(--ouro);}
+.pop-item.on .cx::after{content:"";width:8px;height:4px;border-left:2px solid #1b1303;
+  border-bottom:2px solid #1b1303;transform:rotate(-45deg) translate(1px,-1px);}
+.pop-item .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pop-item .cn{font-family:"JetBrains Mono";font-size:11px;color:var(--txt-3);}
+.pop-rodape{padding:8px 10px;border-top:1px solid var(--line-1);display:flex;justify-content:space-between;
+  align-items:center;gap:8px;font-size:11.5px;font-weight:700;color:var(--txt-3);}
+.pop-acoes{display:flex;gap:6px;}
+.pop-mini{
+  cursor:pointer;height:27px;padding:0 9px;border-radius:8px;border:1px solid var(--line-1);
+  background:var(--surface-2);color:var(--txt-2);font-size:11.5px;font-weight:700;transition:all .18s var(--ease);
+}
+.pop-mini:hover{border-color:var(--ouro-linha);color:var(--ouro-forte);}
+.pop-vazio{padding:22px;text-align:center;color:var(--txt-3);font-size:12.5px;}
 .busca{margin-left:auto;display:flex;gap:8px;align-items:center;flex:1 1 230px;min-width:200px;}
 .busca input{
   flex:1 1 auto;min-width:0;padding:9px 13px;border-radius:11px;border:1px solid var(--line-1);

@@ -38,7 +38,7 @@ var E = {
   pagina: "comissao",
   de: null, ate: null,
   filiais: null,
-  supervisor: "",
+  supervisores: null,   /* null = todos; conjunto de codigos = esses */
   busca: "",
   grao: "rca",
   colunas: "essencial",        /* "essencial" | "completo" */
@@ -253,7 +253,7 @@ function filtrosAtuais() {
     pagina: E.pagina,
     de: E.de, ate: E.ate,
     filiais: E.filiais ? Array.from(E.filiais) : null,
-    supervisor: E.supervisor,
+    supervisores: E.supervisores ? Array.from(E.supervisores) : null,
     busca: E.busca,
     grao: E.grao,
     limiteMargem: E.limiteMargem,
@@ -270,7 +270,11 @@ function aplicarFiltros(o) {
   if (o.de) E.de = o.de;
   if (o.ate) E.ate = o.ate;
   E.filiais = Array.isArray(o.filiais) && o.filiais.length ? new Set(o.filiais.map(Number)) : null;
-  E.supervisor = o.supervisor || "";
+  /* `supervisor` (um so) e o formato antigo: link e filtro guardado de antes
+     de 29/10 continuam abrindo, como um conjunto de um. */
+  E.supervisores = Array.isArray(o.supervisores) && o.supervisores.length
+    ? new Set(o.supervisores.map(String))
+    : (o.supervisor ? new Set([String(o.supervisor)]) : null);
   E.busca = o.busca || "";
   if (o.grao) E.grao = o.grao;
   if (o.limiteMargem != null) E.limiteMargem = o.limiteMargem;
@@ -327,9 +331,13 @@ function barraFiltrosAtivos(contagem) {
       tira: function () { E.filiais = null; }
     });
   }
-  if (E.supervisor) {
-    ativos.push({ rot: "Supervisor", txt: nomeSupervisor(E.supervisor),
-                  tira: function () { E.supervisor = ""; } });
+  if (E.supervisores && E.supervisores.size) {
+    var sup = Array.from(E.supervisores);
+    ativos.push({
+      rot: E.supervisores.size > 1 ? "Supervisores" : "Supervisor",
+      txt: sup.length <= 2 ? sup.map(nomeSupervisor).join(", ") : fInt(sup.length) + " setores",
+      tira: function () { E.supervisores = null; }
+    });
   }
   if (E.busca) {
     ativos.push({ rot: "Busca", txt: '"' + E.busca + '"', tira: function () { E.busca = ""; } });
@@ -366,7 +374,7 @@ function barraFiltrosAtivos(contagem) {
     var limpar = el("button", "fativo-limpar", "Limpar tudo");
     limpar.type = "button";
     limpar.addEventListener("click", function () {
-      E.filiais = null; E.supervisor = ""; E.busca = "";
+      E.filiais = null; E.supervisores = null; E.busca = "";
       E.posicoes = null; E.motivo = ""; E.soMotivoRca = false;
       desenhar();
     });
@@ -401,7 +409,8 @@ function filiaisDisponiveis() {
 }
 function passaFiltroRca(codusur, codfilial) {
   if (E.filiais && codfilial != null && !E.filiais.has(Number(codfilial))) return false;
-  if (E.supervisor && String(supervisorDoRca(codusur)) !== String(E.supervisor)) return false;
+  if (E.supervisores && E.supervisores.size
+      && !E.supervisores.has(String(supervisorDoRca(codusur)))) return false;
   if (E.busca) {
     var alvo = (codusur + " " + nomeRca(codusur)).toLowerCase();
     if (alvo.indexOf(E.busca) === -1) return false;
@@ -591,28 +600,161 @@ function campoBusca(placeholder) {
   var l = el("button", "btn-limpar", "Limpar filtros");
   l.type = "button";
   l.addEventListener("click", function () {
-    E.busca = ""; E.filiais = null; E.supervisor = ""; E.posicoes = null;
+    E.busca = ""; E.filiais = null; E.supervisores = null; E.posicoes = null;
     E.motivo = ""; E.soMotivoRca = false; desenhar();
   });
   b.appendChild(i); b.appendChild(l);
   return b;
 }
 
+/* ---------------------------------------------------------------------------
+ * Painel que abre sob um botao (busca + marcar varios)
+ *
+ * Com 27 supervisores, chips como os das filiais nao cabem na barra e um
+ * <select> so deixa escolher um. O desenho e o mesmo do Relatorio 146 e do
+ * Trade: botao com o resumo, painel com busca, marcacao item a item e rodape
+ * com "Limpar".
+ * ------------------------------------------------------------------------ */
+var popAberto = null;
+
+function fecharPop() {
+  if (!popAberto) return;
+  popAberto.el.remove();
+  document.removeEventListener("mousedown", popAberto.fora, true);
+  document.removeEventListener("keydown", popAberto.tecla, true);
+  popAberto = null;
+}
+
+/* `idBotao` em vez do elemento: um desenhar() troca o botao por outro igual, e
+   o painel (que mora no body) sobrevive — procurar pelo id no momento do
+   clique mantem os dois ligados. */
+function abrirPop(idBotao, montar) {
+  if (popAberto && popAberto.id === idBotao) { fecharPop(); return; }
+  fecharPop();
+  var ancora = document.getElementById(idBotao);
+  if (!ancora) return;
+  var caixa = el("div", "pop");
+  montar(caixa);
+  document.body.appendChild(caixa);
+  var r = ancora.getBoundingClientRect();
+  caixa.style.left = Math.max(8, Math.min(window.innerWidth - 330, r.left)) + "px";
+  caixa.style.top = Math.min(r.bottom + 6, window.innerHeight - 160) + "px";
+  var fora = function (ev) {
+    var b = document.getElementById(idBotao);
+    if (!caixa.contains(ev.target) && !(b && b.contains(ev.target))) fecharPop();
+  };
+  var tecla = function (ev) { if (ev.key === "Escape") fecharPop(); };
+  document.addEventListener("mousedown", fora, true);
+  document.addEventListener("keydown", tecla, true);
+  popAberto = { el: caixa, id: idBotao, fora: fora, tecla: tecla };
+}
+
+function semAcento(t) {
+  return String(t == null ? "" : t).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function seletorSupervisor() {
   var g = el("div", "fgrupo");
   g.appendChild(el("span", "frot", "Supervisor"));
-  var s = el("select");
-  var op = el("option", null, "Todos"); op.value = ""; s.appendChild(op);
-  Object.keys(D.supervisores)
-    .map(function (k) { return { cod: k, nome: D.supervisores[k] }; })
-    .sort(function (a, b) { return String(a.nome).localeCompare(String(b.nome), "pt-BR"); })
-    .forEach(function (x) {
-      var o = el("option", null, x.nome); o.value = x.cod;
-      if (String(E.supervisor) === String(x.cod)) o.selected = true;
-      s.appendChild(o);
+
+  var lista = Object.keys(D.supervisores)
+    .map(function (k) { return { cod: String(k), nome: String(D.supervisores[k]) }; })
+    .sort(function (a, b) { return a.nome.localeCompare(b.nome, "pt-BR"); });
+
+  var b = el("button", "pop-botao");
+  b.type = "button";
+  b.id = "sup-botao";
+  var txt = el("span", "tx");
+  b.appendChild(txt);
+  b.appendChild(el("span", "seta"));
+
+  function escolhidos() { return E.supervisores || new Set(); }
+  function pintarBotao() {
+    var n = escolhidos().size;
+    txt.textContent = n === 0 ? "Todos"
+      : n === 1 ? nomeSupervisor(Array.from(escolhidos())[0])
+      : fInt(n) + " supervisores";
+    b.classList.toggle("on", n > 0);
+    b.title = n > 1 ? Array.from(escolhidos()).map(nomeSupervisor).join(", ") : "";
+  }
+  pintarBotao();
+
+  /* O resto da tela espera a pessoa parar de clicar: marcar tres setores sao
+     tres cliques, e redesenhar a tabela a cada um deixa o painel pesado. */
+  var redesenhar = null;
+  function mudou() {
+    pintarBotao();
+    clearTimeout(redesenhar);
+    redesenhar = setTimeout(function () { desenhar(true); }, 140);
+  }
+
+  b.addEventListener("click", function () {
+    abrirPop("sup-botao", function (caixa) {
+      var topo = el("div", "pop-topo");
+      var busca = el("input");
+      busca.type = "search";
+      busca.placeholder = "Buscar supervisor…";
+      busca.autocomplete = "off";
+      topo.appendChild(busca);
+      var itens = el("div", "pop-lista");
+      var rodape = el("div", "pop-rodape");
+      caixa.appendChild(topo); caixa.appendChild(itens); caixa.appendChild(rodape);
+
+      function desenharLista() {
+        var q = semAcento(busca.value).trim();
+        var achados = q ? lista.filter(function (x) {
+          return semAcento(x.nome).indexOf(q) >= 0 || x.cod.indexOf(q) >= 0;
+        }) : lista;
+        limpar(itens);
+        if (!achados.length) itens.appendChild(el("div", "pop-vazio", "Nada encontrado"));
+        achados.forEach(function (x) {
+          var marcado = escolhidos().has(x.cod);
+          var li = el("button", "pop-item" + (marcado ? " on" : ""));
+          li.type = "button";
+          li.appendChild(el("span", "cx"));
+          li.appendChild(el("span", "tx", x.nome));
+          li.appendChild(el("span", "cn", x.cod));
+          li.addEventListener("click", function () {
+            var atual = new Set(escolhidos());
+            if (atual.has(x.cod)) atual.delete(x.cod); else atual.add(x.cod);
+            E.supervisores = atual.size ? atual : null;
+            mudou();
+            desenharLista();
+          });
+          itens.appendChild(li);
+        });
+
+        limpar(rodape);
+        var n = escolhidos().size;
+        rodape.appendChild(el("span", null, n ? fInt(n) + (n > 1 ? " marcados" : " marcado") : "Todos"));
+        var acoes = el("span", "pop-acoes");
+        if (q && achados.length > 1) {
+          var todos = el("button", "pop-mini", "Marcar os " + fInt(achados.length));
+          todos.type = "button";
+          todos.addEventListener("click", function () {
+            var atual = new Set(escolhidos());
+            achados.forEach(function (x) { atual.add(x.cod); });
+            E.supervisores = atual.size ? atual : null;
+            mudou(); desenharLista();
+          });
+          acoes.appendChild(todos);
+        }
+        var limpa = el("button", "pop-mini", "Limpar");
+        limpa.type = "button";
+        limpa.addEventListener("click", function () {
+          E.supervisores = null; mudou(); desenharLista();
+        });
+        acoes.appendChild(limpa);
+        rodape.appendChild(acoes);
+      }
+
+      busca.addEventListener("input", desenharLista);
+      desenharLista();
+      setTimeout(function () { busca.focus(); }, 30);
     });
-  s.addEventListener("change", function () { E.supervisor = s.value; desenhar(); });
-  g.appendChild(s);
+  });
+
+  g.appendChild(b);
   return g;
 }
 
@@ -1082,7 +1224,8 @@ function exportarPlanilha(cfg, linhas) {
   var filtros = [
     ["Período", fData(E.de) + " a " + fData(E.ate)],
     ["Filiais", E.filiais ? Array.from(E.filiais).join(", ") : "todas"],
-    ["Supervisor", E.supervisor ? nomeSupervisor(E.supervisor) : "todos"]
+    ["Supervisor", E.supervisores && E.supervisores.size
+       ? Array.from(E.supervisores).map(nomeSupervisor).join(", ") : "todos"]
   ];
   if (E.busca) filtros.push(["Busca", E.busca]);
   if (cfg.filtrosExtras) cfg.filtrosExtras().forEach(function (f) { filtros.push(f); });
@@ -1903,7 +2046,7 @@ function paginaPedidos(raiz) {
 
   var linhas = todos.filter(function (p) {
     if (E.posicoes && !E.posicoes.has(p[6])) return false;
-    if (E.supervisor && String(p[4]) !== String(E.supervisor)) return false;
+    if (E.supervisores && E.supervisores.size && !E.supervisores.has(String(p[4]))) return false;
     if (E.busca) {
       var alvo = (p[1] + " " + p[2] + " " + nomeCliente(p[2]) + " " + nomeRca(p[3])).toLowerCase();
       if (alvo.indexOf(E.busca) === -1) return false;
