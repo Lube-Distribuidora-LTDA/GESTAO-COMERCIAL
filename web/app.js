@@ -76,6 +76,10 @@ function fNum(v, d) { return v == null ? "—" : Number(v).toLocaleString("pt-BR
 function fR$(v) { return n(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function fR$0(v) { return n(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }); }
 function fPct(v, casas) { return v == null ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas == null ? 2 : casas, maximumFractionDigits: casas == null ? 2 : casas }) + "%"; }
+/* A margem aparece com 4 casas em todo o painel: as bordas das faixas de
+   comissão são em 0,0001 ("21% < 21,9999"), então 25,9999% e 26,0001% não
+   podem virar o mesmo "26,00%" na tela pagando faixas diferentes. */
+function pct4(v) { return fPct(v, 4); }
 function fCurto(v) {
   var a = Math.abs(n(v));
   if (a >= 1e9) return "R$ " + fNum(v / 1e9, 2) + " bi";
@@ -1491,11 +1495,21 @@ function paginaComissaoSt(raiz) {
   var empresa = calcular(geral);
 
   var somaRca = itens.reduce(function (t, i) { return t + i.comissao; }, 0);
-  var totalPowerBi = empresa.totalLiquido * empresa.faixa;
 
   var somaM6 = itens.reduce(function (t, i) { return t + i.totalLiquidoSst; }, 0);
   var soma44 = itens.reduce(function (t, i) { return t + i.totalLiquido; }, 0);
   var somaSt = itens.reduce(function (t, i) { return t + i.st; }, 0);
+
+  /* O % liquido do periodo inteiro: massa / total liquido do conjunto — a
+     linha de total do Power BI. Nao e a media das linhas da tabela; na media
+     simples um RCA de R$ 20 mil pesaria igual a um de R$ 2 milhoes. As duas
+     aparecem (a simples, na ajuda do cartao), para ninguem confundir. */
+  var somaMassa = itens.reduce(function (t, i) { return t + i.massa; }, 0);
+  var percPeriodo = somaM6 ? (somaMassa / somaM6) * 100 : null;
+  var comPerc = itens.filter(function (i) { return i.perc != null && isFinite(i.perc); });
+  var mediaSimples = comPerc.length
+    ? comPerc.reduce(function (t, i) { return t + i.perc; }, 0) / comPerc.length
+    : null;
 
   /* ---------- os três cards da tela original ---------- */
   /* Esta é uma tela de conferência: quem a usa vai comparar centavo a centavo
@@ -1521,7 +1535,13 @@ function paginaComissaoSt(raiz) {
         ajuda: "Soma o ST à base que paga a comissão, que usa a devolução COM ST. " +
                "Por isso Total líquido + Total ST não dá exatamente este número." },
       { rotulo: "Massa de margem", numero: empresa.massa, formatar: fR$, exato: true,
-        tom: "bom", sub: "total líquido menos CMV líquido" }
+        tom: "bom", sub: "total líquido menos CMV líquido" },
+      { rotulo: "% líquido", numero: percPeriodo, formatar: pct4,
+        sub: "massa de margem ÷ total líquido",
+        ajuda: "O total da coluna % LIQUIDO, como o Power BI totaliza: a massa de todos "
+               + "dividida pelo total líquido de todos. Não é a média das linhas — nela um RCA "
+               + "pequeno pesaria igual a um grande. A média simples entre os RCAs dá "
+               + fPct(mediaSimples, 4) + "." }
     ]
   }));
 
@@ -1535,26 +1555,6 @@ function paginaComissaoSt(raiz) {
   f.appendChild(seletorSupervisor());
   f.appendChild(campoBusca("Buscar RCA por nome ou código…"));
   raiz.appendChild(f);
-
-  /* ---------- os dois totais, lado a lado ---------- */
-  var pt = painel("Os dois totais desta tela",
-    "O Power BI mostra, na linha de total, a faixa da empresa aplicada ao total do período. " +
-    "Isso não é a soma do que se paga: cada vendedor tem a faixa dele.");
-  var conf = el("div", "confere");
-  [
-    ["Soma por RCA", fR$(somaRca), "Uma faixa por vendedor. É o que se paga.", true],
-    ["Como o Power BI totaliza", fR$(totalPowerBi),
-     "Faixa única de " + fPct(empresa.faixa * 100, 2) + " sobre o total.", false],
-    ["Diferença", fR$(somaRca - totalPowerBi), "O quanto a linha de total engana.", false]
-  ].forEach(function (c) {
-    var cel = el("div", "cel" + (c[3] ? " destaque" : ""));
-    cel.appendChild(el("div", "rot", c[0]));
-    cel.appendChild(el("div", "num", c[1]));
-    cel.appendChild(el("div", "dica", c[2]));
-    conf.appendChild(cel);
-  });
-  pt.corpo.appendChild(conf);
-  raiz.appendChild(pt);
 
   /* ---------- distribuição por faixa ---------- */
   var porFaixa = new Map();
@@ -1651,6 +1651,7 @@ function paginaComissaoSt(raiz) {
         { rotulo: "Vendedores", numero: todas.length, formatar: fInt },
         { rotulo: "Total líquido", numero: m6, formatar: fR$, exato: true },
         { rotulo: "Massa de margem", numero: ma, formatar: fR$, exato: true },
+        { rotulo: "% líquido", numero: m6 ? (ma / m6) * 100 : null, formatar: pct4 },
         { rotulo: "Comissão a pagar", numero: com, formatar: fR$, exato: true, destaque: true }
       ];
     },

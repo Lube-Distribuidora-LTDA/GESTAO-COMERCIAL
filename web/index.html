@@ -254,6 +254,9 @@ button,input,select{font-family:inherit;font-weight:600;}
 /* duas colunas fixas: com "auto-fit" o quarto cartão caía sozinho numa
    segunda linha quando faltavam poucos pixels, e a linha ficava torta */
 .heroi-lado{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;align-items:stretch;}
+/* número ímpar de cartões: o último ocupa a linha inteira em vez de deixar
+   um buraco do lado direito (a aba ST passou a ter cinco em 2026-10-29) */
+.heroi-lado>.kpi:last-child:nth-child(odd){grid-column:1 / -1;}
 
 /* ---------- kpis ---------- */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;}
