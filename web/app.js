@@ -622,6 +622,8 @@ function fecharPop() {
   popAberto.el.remove();
   document.removeEventListener("mousedown", popAberto.fora, true);
   document.removeEventListener("keydown", popAberto.tecla, true);
+  window.removeEventListener("scroll", popAberto.rolou, true);
+  window.removeEventListener("resize", popAberto.posicionar);
   popAberto = null;
 }
 
@@ -636,9 +638,27 @@ function abrirPop(idBotao, montar) {
   var caixa = el("div", "pop");
   montar(caixa);
   document.body.appendChild(caixa);
-  var r = ancora.getBoundingClientRect();
-  caixa.style.left = Math.max(8, Math.min(window.innerWidth - 330, r.left)) + "px";
-  caixa.style.top = Math.min(r.bottom + 6, window.innerHeight - 160) + "px";
+  /* O painel e fixo na tela (position:fixed) e so sabe onde fica o botao no momento em que e posicionado.
+     Por isso ele e posicionado de novo quando a tela muda de tamanho ou e redesenhada, e FECHA quando a
+     pagina rola: antes, ao arrastar a lista ate o fim a rolagem passava para a pagina e o painel ficava
+     parado no meio da tela, longe do botao. */
+  var posicionar = function () {
+    var b = document.getElementById(idBotao);
+    if (!b) return;
+    var r = b.getBoundingClientRect();
+    caixa.style.left = Math.max(8, Math.min(window.innerWidth - 330, r.left)) + "px";
+    caixa.style.top = Math.min(r.bottom + 6, window.innerHeight - 160) + "px";
+  };
+  posicionar();
+  var y0 = window.scrollY;
+  var rolou = function (ev) {
+    if (ev.target instanceof Node && caixa.contains(ev.target)) return;   // rolar a lista do proprio painel nao fecha
+    if (Math.abs(window.scrollY - y0) > 3) fecharPop();             // a pagina andou: o painel some (um redesenho que devolve a rolagem nao conta)
+  };
+  /* roda do mouse sobre o cabecalho ou o rodape do painel nao pode rolar a pagina por baixo dele */
+  caixa.addEventListener("wheel", function (ev) {
+    if (!(ev.target.closest && ev.target.closest(".pop-lista"))) ev.preventDefault();
+  }, { passive: false });
   var fora = function (ev) {
     var b = document.getElementById(idBotao);
     if (!caixa.contains(ev.target) && !(b && b.contains(ev.target))) fecharPop();
@@ -646,7 +666,9 @@ function abrirPop(idBotao, montar) {
   var tecla = function (ev) { if (ev.key === "Escape") fecharPop(); };
   document.addEventListener("mousedown", fora, true);
   document.addEventListener("keydown", tecla, true);
-  popAberto = { el: caixa, id: idBotao, fora: fora, tecla: tecla };
+  window.addEventListener("scroll", rolou, true);
+  window.addEventListener("resize", posicionar);
+  popAberto = { el: caixa, id: idBotao, fora: fora, tecla: tecla, rolou: rolou, posicionar: posicionar };
 }
 
 function semAcento(t) {
@@ -2588,6 +2610,7 @@ function desenhar(manterRolagem) {
 
   desenharMenu();
   if (manterRolagem) window.scrollTo(0, y);
+  if (popAberto) popAberto.posicionar();                    // o painel de marcar varios fica colado no botao novo
 
   if (focoId) {
     var depois = document.getElementById(focoId);

@@ -246,7 +246,7 @@ button,input,select{font-family:inherit;font-weight:600;}
   color:var(--txt-1);padding:0 11px;font-size:12.5px;font-weight:600;outline:none;
 }
 .pop-topo input:focus{border-color:var(--ouro-linha);box-shadow:0 0 0 3px var(--ouro-dim);}
-.pop-lista{overflow:auto;padding:6px;flex:1;}
+.pop-lista{overflow:auto;padding:6px;flex:1;overscroll-behavior:contain;}  /* chegou ao fim da lista: a rolagem NAO passa para a pagina */
 .pop-item{
   display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;text-align:left;
   padding:8px 10px;border-radius:9px;color:var(--txt-2);font-size:12.5px;font-weight:600;cursor:pointer;
