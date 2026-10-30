@@ -1618,21 +1618,10 @@ function abrirNotasDoRca(r) {
  * o vendedor atende mais de uma filial.
  * ------------------------------------------------------------------------ */
 
-/* Filiais que a página do Power BI traz marcadas. Vale só na primeira vez que
-   se abre a aba; a partir daí manda o que a pessoa escolheu. */
-var FILIAIS_ST_PADRAO = [1, 7, 10, 11];
-var st_padraoAplicado = false;
-
+/* Abre com TODAS as filiais, como as outras abas (regra do Júlio, 2026-10-30).
+   Até aqui a aba abria com as filiais da página do Power BI (1, 7, 10 e 11), o
+   que deixava de fora a filial 12 — o RJ inteiro e parte da LUBE DISTRIBUIDORA. */
 function paginaComissaoSt(raiz) {
-  if (!st_padraoAplicado) {
-    st_padraoAplicado = true;
-    if (E.filiais == null) {
-      var tem = filiaisDisponiveis();
-      var sugerida = FILIAIS_ST_PADRAO.filter(function (f) { return tem.indexOf(f) !== -1; });
-      if (sugerida.length && sugerida.length < tem.length) E.filiais = new Set(sugerida);
-    }
-  }
-
   var linhas = (D.comissao.rca || []).filter(function (l) { return passaFiltroRca(l[0], l[1]); });
 
   /* uma linha por RCA: o grão desta página é fixo, não tem botão de grão */
